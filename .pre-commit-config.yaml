@@ -1,0 +1,69 @@
+ci:
+  autofix_prs: true
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit suggestions'
+  autoupdate_schedule: quarterly
+  # mypy exceeds free tier 250MiB limit on pre-commit.ci
+  # https://github.com/pre-commit-ci/issues/issues/171
+  skip: [mypy]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: no-commit-to-branch
+        name: No commits to master
+      - id: end-of-file-fixer
+        name: End-of-file fixer
+      - id: trailing-whitespace
+        name: Remove trailing whitespaces
+      - id: check-toml
+        name: Check toml
+      - id: check-yaml
+        name: Check yaml
+        exclude: |
+          (?x)^(
+              conda/pytorch-geometric/meta.yaml|
+              conda/pyg/meta.yaml
+          )$
+
+  - repo: https://github.com/adrienverge/yamllint.git
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        name: Lint yaml
+        args: [-d, '{extends: default, rules: {line-length: disable, document-start: disable, truthy: {level: error}, braces: {max-spaces-inside: 1}}}']
+
+  - repo: https://github.com/google/yapf
+    rev: v0.40.2
+    hooks:
+      - id: yapf
+        name: Format code
+        additional_dependencies: [toml]
+
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        name: Sort imports
+
+  - repo: https://github.com/PyCQA/flake8
+    rev: 7.1.0
+    hooks:
+      - id: flake8
+        name: Check PEP8
+        additional_dependencies: [Flake8-pyproject]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.0
+    hooks:
+      - id: ruff
+        name: Ruff formatting
+        args: [--fix, --exit-non-zero-on-fix]
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.10.1
+    hooks:
+      - id: mypy
+        name: Check types
+        additional_dependencies: [torch==2.2.0]
+        exclude: "^test/|^examples/"
