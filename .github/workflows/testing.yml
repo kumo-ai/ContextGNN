@@ -9,14 +9,26 @@ on:  # yamllint disable-line rule:truthy
 jobs:
 
   pytest:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        python-version: [3.8]
+
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup packages
-        uses: ./.github/actions/setup
+      - name: Set up Python ${{ inputs.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install PyTorch
+        run: |
+          pip install torch==2.3.0 --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install --no-index pyg-lib==0.4.0 -f https://data.pyg.org/whl/torch-2.3.0+cpu.html
 
       - name: Install main package
         run: |
