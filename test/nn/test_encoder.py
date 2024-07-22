@@ -5,7 +5,7 @@ from relbench.modeling.utils import get_stype_proposal
 from torch_frame.config.text_embedder import TextEmbedderConfig
 from torch_frame.testing.text_embedder import HashTextEmbedder
 
-from hybridgnn.nn.encoder import HeteroStypeWiseEncoder
+from hybridgnn.nn.encoder import DEFAULT_STYPE_ENCODER_DICT, HeteroEncoder
 
 
 def test_encoder(tmp_path):
@@ -26,8 +26,9 @@ def test_encoder(tmp_path):
 
     # Ensure that full-batch model works as expected ##########################
 
-    encoder = HeteroStypeWiseEncoder(64, node_to_col_names_dict,
-                                     col_stats_dict)
+    encoder = HeteroEncoder(
+        64, node_to_col_names_dict, col_stats_dict,
+        stype_encoder_cls_kwargs=DEFAULT_STYPE_ENCODER_DICT)
 
     x_dict = encoder(data.tf_dict)
     assert 'product' in x_dict.keys()

@@ -28,8 +28,6 @@ def test_idgnn(tmp_path):
     assert task.task_type == TaskType.LINK_PREDICTION
 
     train_table = task.get_table("train")
-
-    train_table = task.get_table("train")
     train_table_input = get_link_train_table_input(train_table, task)
     batch_size = 16
     train_loader = NeighborLoader(

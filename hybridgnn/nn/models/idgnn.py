@@ -7,7 +7,11 @@ from torch_geometric.data import HeteroData
 from torch_geometric.nn import MLP
 from torch_geometric.typing import NodeType
 
-from hybridgnn.nn.encoder import HeteroStypeWiseEncoder, HeteroTemporalEncoder
+from hybridgnn.nn.encoder import (
+    DEFAULT_STYPE_ENCODER_DICT,
+    HeteroEncoder,
+    HeteroTemporalEncoder,
+)
 from hybridgnn.nn.models import HeteroGraphSAGE
 
 
@@ -24,13 +28,14 @@ class IDGNN(torch.nn.Module):
     ) -> None:
         super().__init__()
 
-        self.encoder = HeteroStypeWiseEncoder(
+        self.encoder = HeteroEncoder(
             channels=channels,
             node_to_col_names_dict={
                 node_type: data[node_type].tf.col_names_dict
                 for node_type in data.node_types
             },
             node_to_col_stats=col_stats_dict,
+            stype_encoder_cls_kwargs=DEFAULT_STYPE_ENCODER_DICT,
         )
         self.temporal_encoder = HeteroTemporalEncoder(
             node_types=[

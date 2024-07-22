@@ -1,5 +1,5 @@
-from .encoder import HeteroStypeWiseEncoder
+from .encoder import HeteroEncoder
 
 __all__ = classes = [
-    'HeteroStypeWiseEncoder',
+    'HeteroEncoder',
 ]

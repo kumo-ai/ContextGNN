@@ -4,7 +4,7 @@ import torch
 import torch_frame
 from torch import Tensor
 from torch_frame.data.stats import StatType
-from torch_frame.nn.encoder.stypewise_encoder import StypeWiseFeatureEncoder
+from torch_frame.nn.models import ResNet
 from torch_geometric.nn import PositionalEncoding
 from torch_geometric.typing import NodeType
 
@@ -18,10 +18,12 @@ DEFAULT_STYPE_ENCODER_DICT: Dict[torch_frame.stype, Any] = {
     torch_frame.embedding: (torch_frame.nn.LinearEmbeddingEncoder, {}),
     torch_frame.timestamp: (torch_frame.nn.TimestampEncoder, {}),
 }
+SECONDS_IN_A_DAY = 60 * 60 * 24
 
 
-class HeteroStypeWiseEncoder(torch.nn.Module):
-    r"""StypeWiseEncoder based on PyTorch Frame.
+class HeteroEncoder(torch.nn.Module):
+    r"""HeteroStypeWiseEncoder is a simple encoder to encode multi-modal
+    data from different node types.
 
     Args:
         channels (int): The output channels for each node type.
@@ -35,6 +37,14 @@ class HeteroStypeWiseEncoder(torch.nn.Module):
             A dictionary mapping from :obj:`torch_frame.stype` object into a
             tuple specifying :class:`torch_frame.nn.StypeEncoder` class and its
             keyword arguments :obj:`kwargs`.
+        torch_frame_model_cls: Model class for PyTorch Frame. The class object
+            takes :class:`TensorFrame` object as input and outputs
+            :obj:`channels`-dimensional embeddings. Default to
+            :class:`torch_frame.nn.ResNet`.
+        torch_frame_model_kwargs (Dict[str, Any]): Keyword arguments for
+            :class:`torch_frame_model_cls` class. Default keyword argument is
+            set specific for :class:`torch_frame.nn.ResNet`. Expect it to
+            be changed for different :class:`torch_frame_model_cls`.
     """
     def __init__(
         self,
@@ -42,8 +52,12 @@ class HeteroStypeWiseEncoder(torch.nn.Module):
         node_to_col_names_dict: Dict[NodeType, Dict[torch_frame.stype,
                                                     List[str]]],
         node_to_col_stats: Dict[NodeType, Dict[str, Dict[StatType, Any]]],
-        stype_encoder_cls_kwargs: Dict[torch_frame.stype,
-                                       Any] = DEFAULT_STYPE_ENCODER_DICT,
+        stype_encoder_cls_kwargs: Dict[torch_frame.stype, Any],
+        torch_frame_model_cls=ResNet,
+        torch_frame_model_kwargs: Dict[str, Any] = {
+            "channels": 128,
+            "num_layers": 4,
+        },
     ) -> None:
         super().__init__()
 
@@ -57,7 +71,8 @@ class HeteroStypeWiseEncoder(torch.nn.Module):
                 for stype in node_to_col_names_dict[node_type].keys()
             }
 
-            self.encoders[node_type] = StypeWiseFeatureEncoder(
+            self.encoders[node_type] = torch_frame_model_cls(
+                **torch_frame_model_kwargs,
                 out_channels=channels,
                 col_stats=node_to_col_stats[node_type],
                 col_names_dict=node_to_col_names_dict[node_type],
@@ -73,7 +88,7 @@ class HeteroStypeWiseEncoder(torch.nn.Module):
         tf_dict: Dict[NodeType, torch_frame.TensorFrame],
     ) -> Dict[NodeType, Tensor]:
         x_dict = {
-            node_type: self.encoders[node_type](tf)[0].sum(axis=1)
+            node_type: self.encoders[node_type](tf)
             for node_type, tf in tf_dict.items()
         }
         return x_dict
@@ -110,7 +125,7 @@ class HeteroTemporalEncoder(torch.nn.Module):
 
         for node_type, time in time_dict.items():
             rel_time = seed_time[batch_dict[node_type]] - time
-            rel_time = rel_time / (60 * 60 * 24)  # Convert seconds to days.
+            rel_time = rel_time / SECONDS_IN_A_DAY
 
             x = self.encoder_dict[node_type](rel_time)
             x = self.lin_dict[node_type](x)
