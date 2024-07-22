@@ -14,7 +14,7 @@ class HeteroGraphSAGE(torch.nn.Module):
         channels: int,
         aggr: str = "mean",
         num_layers: int = 2,
-    ):
+    ) -> None:
         super().__init__()
 
         self.convs = torch.nn.ModuleList()
@@ -36,7 +36,7 @@ class HeteroGraphSAGE(torch.nn.Module):
                 norm_dict[node_type] = LayerNorm(channels, mode="node")
             self.norms.append(norm_dict)
 
-    def reset_parameters(self):
+    def reset_parameters(self) -> None:
         for conv in self.convs:
             conv.reset_parameters()
         for norm_dict in self.norms:

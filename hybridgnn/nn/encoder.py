@@ -25,7 +25,7 @@ class HeteroStypeWiseEncoder(torch.nn.Module):
 
     Args:
         channels (int): The output channels for each node type.
-        node_to_col_names_dict (Dict[NodeType, Dict[torch_frame.stype, List[str]]]): # noqa
+        node_to_col_names_dict (Dict[NodeType, Dict[torch_frame.stype, List[str]]]):  # noqa: E501
             A dictionary mapping from node type to column names dictionary
             compatible to PyTorch Frame.
         node_to_col_stats (Dict[NodeType, Dict[str, Dict[StatType, Any]]]):
@@ -44,7 +44,7 @@ class HeteroStypeWiseEncoder(torch.nn.Module):
         node_to_col_stats: Dict[NodeType, Dict[str, Dict[StatType, Any]]],
         stype_encoder_cls_kwargs: Dict[torch_frame.stype,
                                        Any] = DEFAULT_STYPE_ENCODER_DICT,
-    ):
+    ) -> None:
         super().__init__()
 
         self.encoders = torch.nn.ModuleDict()
@@ -64,7 +64,7 @@ class HeteroStypeWiseEncoder(torch.nn.Module):
                 stype_encoder_dict=stype_encoder_dict,
             )
 
-    def reset_parameters(self):
+    def reset_parameters(self) -> None:
         for encoder in self.encoders.values():
             encoder.reset_parameters()
 
@@ -80,7 +80,7 @@ class HeteroStypeWiseEncoder(torch.nn.Module):
 
 
 class HeteroTemporalEncoder(torch.nn.Module):
-    def __init__(self, node_types: List[NodeType], channels: int):
+    def __init__(self, node_types: List[NodeType], channels: int) -> None:
         super().__init__()
 
         self.encoder_dict = torch.nn.ModuleDict({
@@ -94,7 +94,7 @@ class HeteroTemporalEncoder(torch.nn.Module):
             for node_type in node_types
         })
 
-    def reset_parameters(self):
+    def reset_parameters(self) -> None:
         for encoder in self.encoder_dict.values():
             encoder.reset_parameters()
         for lin in self.lin_dict.values():

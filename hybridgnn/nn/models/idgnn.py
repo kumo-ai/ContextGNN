@@ -21,7 +21,7 @@ class IDGNN(torch.nn.Module):
         out_channels: int,
         aggr: str,
         norm: str,
-    ):
+    ) -> None:
         super().__init__()
 
         self.encoder = HeteroStypeWiseEncoder(
@@ -56,7 +56,7 @@ class IDGNN(torch.nn.Module):
         self.id_awareness_emb = torch.nn.Embedding(1, channels)
         self.reset_parameters()
 
-    def reset_parameters(self):
+    def reset_parameters(self) -> None:
         self.encoder.reset_parameters()
         self.temporal_encoder.reset_parameters()
         self.gnn.reset_parameters()
