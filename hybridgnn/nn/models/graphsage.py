@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import torch
 from torch import Tensor
@@ -36,6 +36,8 @@ class HeteroGraphSAGE(torch.nn.Module):
                 norm_dict[node_type] = LayerNorm(channels, mode="node")
             self.norms.append(norm_dict)
 
+        self.channels = channels
+
     def reset_parameters(self) -> None:
         for conv in self.convs:
             conv.reset_parameters()
@@ -47,8 +49,6 @@ class HeteroGraphSAGE(torch.nn.Module):
         self,
         x_dict: Dict[NodeType, Tensor],
         edge_index_dict: Dict[NodeType, Tensor],
-        num_sampled_nodes_dict: Optional[Dict[NodeType, List[int]]] = None,
-        num_sampled_edges_dict: Optional[Dict[EdgeType, List[int]]] = None,
     ) -> Dict[NodeType, Tensor]:
         for i, (conv, norm_dict) in enumerate(zip(self.convs, self.norms)):
             x_dict = conv(x_dict, edge_index_dict)
