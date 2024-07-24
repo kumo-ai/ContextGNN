@@ -79,7 +79,7 @@ class HybridGNN(torch.nn.Module):
         batch: HeteroData,
         entity_table: NodeType,
         dst_table: NodeType,
-    ) -> tuple[Tensor, Tensor]:
+    ) -> tuple[Tensor, Tensor, Tensor]:
         seed_time = batch[entity_table].seed_time
         x_dict = self.encoder(batch.tf_dict)
         # Add ID-awareness to the root node
@@ -98,21 +98,21 @@ class HybridGNN(torch.nn.Module):
         lhs_embedding = x_dict[entity_table]  # batch_size, channel
         rhs_gnn_embedding = x_dict[dst_table]  # num_sampled_rhs, channel
         rhs_idgnn_index = batch.n_id_dict[dst_table]  # num_sampled_rhs
-        lhs_idgnn_batch = batch.batch_dict[entity_table]  # batch_size
+        lhs_idgnn_batch = batch.batch_dict[dst_table]  # batch_size
         rhs_embedding = self.rhs_embedding  # num_rhs_nodes, channel
-        import pdb
-        pdb.set_trace()
 
         lhs_embedding_projected = self.lhs_projector(
-            lhs_embedding)  # batch_size, channel
+            lhs_embedding)  # batch_size, hidden_channel
         embgnn_logits = lhs_embedding_projected @ rhs_embedding.weight.t(
         )  # batch_size, num_rhs_nodes
 
         # Calculate idgnn logits
         idgnn_logits = self.head(
             rhs_gnn_embedding).flatten()  # num_sampled_rhs
-        idgnn_logits += (lhs_embedding[lhs_idgnn_batch] *
-                         rhs_gnn_embedding).sum(dim=-1).flatten()
+        idgnn_logits += (
+            lhs_embedding[lhs_idgnn_batch] *  # num_sampled_rhs, channel
+            rhs_gnn_embedding).sum(
+                dim=-1).flatten()  # num_sampled_rhs, channel
 
         embgnn_logits[lhs_idgnn_batch, rhs_idgnn_index] = idgnn_logits
-        return embgnn_logits, lhs_embedding_projected
+        return lhs_embedding_projected, rhs_embedding.weight, embgnn_logits

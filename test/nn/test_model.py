@@ -86,11 +86,21 @@ def test_hybridgnn(tmp_path):
 
     assert len(batch[task.dst_entity_table].batch) > 0
 
+    channels = 64
     model = HybridGNN(data=data, col_stats_dict=col_stats_dict,
                       num_nodes=train_table_input.num_dst_nodes, num_layers=2,
-                      channels=64, out_channels=1, aggr="sum",
+                      channels=channels, out_channels=1, aggr="sum",
                       norm="layer_norm")
     model.train()
 
-    out = model(batch, task.src_entity_table, task.dst_entity_table).flatten()
-    assert len(out) == len(batch[task.dst_entity_table].n_id)
+    lhs_embedding, rhs_embedding, logits = model(batch, task.src_entity_table,
+                                                 task.dst_entity_table)
+
+    assert logits.shape[0] == batch_size
+    assert logits.shape[1] == train_table_input.num_dst_nodes
+
+    assert lhs_embedding.shape[0] == batch_size
+    assert lhs_embedding.shape[1] == channels
+
+    assert rhs_embedding.shape[0] == train_table_input.num_dst_nodes
+    assert rhs_embedding.shape[1] == channels
