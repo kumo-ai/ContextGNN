@@ -62,6 +62,8 @@ class HybridGNN(torch.nn.Module):
         self.id_awareness_emb = torch.nn.Embedding(1, channels)
         self.rhs_embedding = torch.nn.Embedding(num_nodes, channels)
         self.lhs_projector = torch.nn.Linear(channels, channels)
+        self.lin_offset_idgnn = torch.nn.Linear(channels, 1)
+        self.lin_offset_embgnn = torch.nn.Linear(channels, 1)
         self.channels = channels
 
         self.reset_parameters()
@@ -73,6 +75,8 @@ class HybridGNN(torch.nn.Module):
         self.head.reset_parameters()
         self.id_awareness_emb.reset_parameters()
         self.rhs_embedding.reset_parameters()
+        self.lin_offset_embgnn.reset_parameters()
+        self.lin_offset_idgnn.reset_parameters()
 
     def forward(
         self,
@@ -106,6 +110,10 @@ class HybridGNN(torch.nn.Module):
         embgnn_logits = lhs_embedding_projected @ rhs_embedding.weight.t(
         )  # batch_size, num_rhs_nodes
 
+        # Model the importance of embedding-GNN prediction for each lhs node
+        embgnn_offset_logits = self.lin_offset_embgnn(lhs_embedding).flatten()
+        embgnn_logits += embgnn_offset_logits.view(-1, 1)
+
         # Calculate idgnn logits
         idgnn_logits = self.head(
             rhs_gnn_embedding).flatten()  # num_sampled_rhs
@@ -114,5 +122,9 @@ class HybridGNN(torch.nn.Module):
             rhs_gnn_embedding).sum(
                 dim=-1).flatten()  # num_sampled_rhs, channel
 
+        # Model the importance of ID-GNN prediction for each lhs node
+        idgnn_offset_logits = self.lin_offset_idgnn(lhs_embedding).flatten()
+        idgnn_logits = idgnn_logits + idgnn_offset_logits[lhs_idgnn_batch]
+
         embgnn_logits[lhs_idgnn_batch, rhs_idgnn_index] = idgnn_logits
-        return lhs_embedding_projected, rhs_embedding.weight, embgnn_logits
+        return embgnn_logits

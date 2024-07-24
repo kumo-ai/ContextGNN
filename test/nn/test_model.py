@@ -93,14 +93,7 @@ def test_hybridgnn(tmp_path):
                       norm="layer_norm")
     model.train()
 
-    lhs_embedding, rhs_embedding, logits = model(batch, task.src_entity_table,
-                                                 task.dst_entity_table)
+    logits = model(batch, task.src_entity_table, task.dst_entity_table)
 
     assert logits.shape[0] == batch_size
     assert logits.shape[1] == train_table_input.num_dst_nodes
-
-    assert lhs_embedding.shape[0] == batch_size
-    assert lhs_embedding.shape[1] == channels
-
-    assert rhs_embedding.shape[0] == train_table_input.num_dst_nodes
-    assert rhs_embedding.shape[1] == channels
