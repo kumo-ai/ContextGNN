@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 import torch
 from torch import Tensor
@@ -83,7 +83,7 @@ class HybridGNN(torch.nn.Module):
         batch: HeteroData,
         entity_table: NodeType,
         dst_table: NodeType,
-    ) -> tuple[Tensor, Tensor, Tensor]:
+    ) -> Tuple[Tensor, Tensor, Tensor]:
         seed_time = batch[entity_table].seed_time
         x_dict = self.encoder(batch.tf_dict)
         # Add ID-awareness to the root node
