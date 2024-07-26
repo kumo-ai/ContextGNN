@@ -16,6 +16,7 @@ from hybridgnn.nn.models import HeteroGraphSAGE
 
 
 class HybridGNN(torch.nn.Module):
+    r"""Implementation of HybridGNN model."""
     def __init__(
         self,
         data: HeteroData,
@@ -61,7 +62,6 @@ class HybridGNN(torch.nn.Module):
 
         self.id_awareness_emb = torch.nn.Embedding(1, channels)
         self.rhs_embedding = torch.nn.Embedding(num_nodes, channels)
-        self.lhs_projector = torch.nn.Linear(channels, channels)
         self.lin_offset_idgnn = torch.nn.Linear(channels, 1)
         self.lin_offset_embgnn = torch.nn.Linear(channels, 1)
         self.channels = channels
@@ -86,6 +86,7 @@ class HybridGNN(torch.nn.Module):
     ) -> Tuple[Tensor, Tensor, Tensor]:
         seed_time = batch[entity_table].seed_time
         x_dict = self.encoder(batch.tf_dict)
+
         # Add ID-awareness to the root node
         x_dict[entity_table][:seed_time.size(0
                                              )] += self.id_awareness_emb.weight
@@ -99,15 +100,14 @@ class HybridGNN(torch.nn.Module):
             x_dict,
             batch.edge_index_dict,
         )
+
         lhs_embedding = x_dict[entity_table]  # batch_size, channel
         rhs_gnn_embedding = x_dict[dst_table]  # num_sampled_rhs, channel
         rhs_idgnn_index = batch.n_id_dict[dst_table]  # num_sampled_rhs
         lhs_idgnn_batch = batch.batch_dict[dst_table]  # batch_size
         rhs_embedding = self.rhs_embedding  # num_rhs_nodes, channel
 
-        lhs_embedding_projected = self.lhs_projector(
-            lhs_embedding)  # batch_size, hidden_channel
-        embgnn_logits = lhs_embedding_projected @ rhs_embedding.weight.t(
+        embgnn_logits = lhs_embedding @ rhs_embedding.weight.t(
         )  # batch_size, num_rhs_nodes
 
         # Model the importance of embedding-GNN prediction for each lhs node
