@@ -31,8 +31,8 @@ from tqdm import tqdm
 from hybridgnn.nn.models import IDGNN, HybridGNN
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="rel-stack")
-parser.add_argument("--task", type=str, default="post-post-related")
+parser.add_argument("--dataset", type=str, default="rel-trial")
+parser.add_argument("--task", type=str, default="site-sponsor-run")
 parser.add_argument(
     "--model",
     type=str,
@@ -77,8 +77,6 @@ except FileNotFoundError:
     Path(stypes_cache_path).parent.mkdir(parents=True, exist_ok=True)
     with open(stypes_cache_path, "w") as f:
         json.dump(col_to_stype_dict, f, indent=2, default=str)
-
-col_to_stype_dict['badges']['TagBased'] = stype.categorical
 
 data, col_stats_dict = make_pkey_fkey_graph(
     dataset.get_db(),
@@ -126,12 +124,11 @@ else:
     train_table = task.get_table("train")
     train_table_input = get_link_train_table_input(train_table, task)
     model = HybridGNN(data=data, col_stats_dict=col_stats_dict,
-                      num_nodes=train_table_input.num_dst_nodes, num_layers=2,
-                      channels=128, aggr="sum", norm="layer_norm",
-                      embedding_dim=64)
+                      num_nodes=train_table_input.num_dst_nodes,
+                      num_layers=args.num_layers, channels=args.channels,
+                      aggr="sum", norm="layer_norm", embedding_dim=64)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-train_sparse_tensor = SparseTensor(dst_nodes_dict["train"][1], device=device)
 
 
 def train() -> float:
@@ -140,12 +137,16 @@ def train() -> float:
     loss_accum = count_accum = 0
     steps = 0
     total_steps = min(len(loader_dict["train"]), args.max_steps_per_epoch)
+    sparse_tensor = SparseTensor(dst_nodes_dict["train"][1], device=device)
     for batch in tqdm(loader_dict["train"], total=total_steps):
         batch = batch.to(device)
 
         # Get ground-truth
         input_id = batch[task.src_entity_table].input_id
-        src_batch, dst_index = train_sparse_tensor[input_id]
+        src_batch, dst_index = sparse_tensor[input_id]
+
+        # Optimization
+        optimizer.zero_grad()
 
         if args.model == 'idgnn':
             out = model(batch, task.src_entity_table,
@@ -159,14 +160,11 @@ def train() -> float:
                 src_batch + batch_size * dst_index,
             ).float()
 
-            # Optimization
-            optimizer.zero_grad()
             loss = F.binary_cross_entropy_with_logits(out, target)
             numel = out.numel()
         else:
             logits = model(batch, task.src_entity_table, task.dst_entity_table)
             edge_label_index = torch.stack([src_batch, dst_index], dim=0)
-            optimizer.zero_grad()
             loss = sparse_cross_entropy(logits, edge_label_index)
             numel = len(batch[task.dst_entity_table].batch)
         loss.backward()
@@ -192,8 +190,7 @@ def train() -> float:
 @torch.no_grad()
 def test(loader: NeighborLoader, stage: str) -> np.ndarray:
     model.eval()
-    sparse_tensor = SparseTensor(dst_nodes_dict[stage][1], device=device)
-    
+
     pred_list: List[Tensor] = []
     for batch in tqdm(loader):
         batch = batch.to(device)
@@ -201,15 +198,15 @@ def test(loader: NeighborLoader, stage: str) -> np.ndarray:
 
         if args.model == 'idgnn':
             out = (model.forward(batch, task.src_entity_table,
-                                task.dst_entity_table).detach().flatten())
-            scores = torch.zeros(batch_size, task.num_dst_nodes, device=out.device)
+                                 task.dst_entity_table).detach().flatten())
+            scores = torch.zeros(batch_size, task.num_dst_nodes,
+                                 device=out.device)
             scores[batch[task.dst_entity_table].batch,
-                batch[task.dst_entity_table].n_id] = torch.sigmoid(out)
+                   batch[task.dst_entity_table].n_id] = torch.sigmoid(out)
         else:
             # Get ground-truth
-            input_id = batch[task.src_entity_table].input_id
-            src_batch, dst_index = sparse_tensor[input_id]
-            scores = model(batch, task.src_entity_table, task.dst_entity_table).detach()
+            scores = model(batch, task.src_entity_table,
+                           task.dst_entity_table).detach()
             scores = torch.sigmoid(scores)
         _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
         pred_list.append(pred_mini)
