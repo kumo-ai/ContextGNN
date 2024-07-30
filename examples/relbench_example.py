@@ -45,7 +45,7 @@ parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=512)
 parser.add_argument("--channels", type=int, default=128)
 parser.add_argument("--aggr", type=str, default="sum")
-parser.add_argument("--num_layers", type=int, default=2)
+parser.add_argument("--num_layers", type=int, default=4)
 parser.add_argument("--num_neighbors", type=int, default=128)
 parser.add_argument("--temporal_strategy", type=str, default="last")
 parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
@@ -122,13 +122,15 @@ if args.model == "idgnn":
         aggr=args.aggr,
         norm="layer_norm",
     ).to(device)
-else:
+elif args.model == 'hybridgnn':
     train_table = task.get_table("train")
     train_table_input = get_link_train_table_input(train_table, task)
     model = HybridGNN(data=data, col_stats_dict=col_stats_dict,
                       num_nodes=train_table_input.num_dst_nodes,
                       num_layers=args.num_layers, channels=args.channels,
                       aggr="sum", norm="layer_norm", embedding_dim=64)
+else:
+    raise ValueError(f"Unsupported model type {args.model}.")
 
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
@@ -190,7 +192,7 @@ def train() -> float:
 
 
 @torch.no_grad()
-def test(loader: NeighborLoader, stage: str) -> np.ndarray:
+def test(loader: NeighborLoader) -> np.ndarray:
     model.eval()
 
     pred_list: List[Tensor] = []
@@ -205,11 +207,13 @@ def test(loader: NeighborLoader, stage: str) -> np.ndarray:
                                  device=out.device)
             scores[batch[task.dst_entity_table].batch,
                    batch[task.dst_entity_table].n_id] = torch.sigmoid(out)
-        else:
+        elif args.model == 'hybridgnn':
             # Get ground-truth
-            scores = model(batch, task.src_entity_table,
+            out = model(batch, task.src_entity_table,
                            task.dst_entity_table).detach()
-            scores = torch.sigmoid(scores)
+            scores = torch.sigmoid(out)
+        else:
+            raise ValueError(f"Unsupported model type: {args.model}.")
         _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
         pred_list.append(pred_mini)
     pred = torch.cat(pred_list, dim=0).cpu().numpy()
