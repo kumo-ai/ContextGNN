@@ -31,8 +31,8 @@ from tqdm import tqdm
 from hybridgnn.nn.models import IDGNN, HybridGNN
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="rel-hm")
-parser.add_argument("--task", type=str, default="user-item-purchase")
+parser.add_argument("--dataset", type=str, default="rel-stack")
+parser.add_argument("--task", type=str, default="post-post-related")
 parser.add_argument(
     "--model",
     type=str,
@@ -77,6 +77,8 @@ except FileNotFoundError:
     Path(stypes_cache_path).parent.mkdir(parents=True, exist_ok=True)
     with open(stypes_cache_path, "w") as f:
         json.dump(col_to_stype_dict, f, indent=2, default=str)
+
+col_to_stype_dict['badges']['TagBased'] = stype.categorical
 
 data, col_stats_dict = make_pkey_fkey_graph(
     dataset.get_db(),
@@ -188,18 +190,27 @@ def train() -> float:
 
 
 @torch.no_grad()
-def test(loader: NeighborLoader) -> np.ndarray:
+def test(loader: NeighborLoader, stage: str) -> np.ndarray:
     model.eval()
-
+    sparse_tensor = SparseTensor(dst_nodes_dict[stage][1], device=device)
+    
     pred_list: List[Tensor] = []
     for batch in tqdm(loader):
         batch = batch.to(device)
-        out = (model.forward(batch, task.src_entity_table,
-                             task.dst_entity_table).detach().flatten())
         batch_size = batch[task.src_entity_table].batch_size
-        scores = torch.zeros(batch_size, task.num_dst_nodes, device=out.device)
-        scores[batch[task.dst_entity_table].batch,
-               batch[task.dst_entity_table].n_id] = torch.sigmoid(out)
+
+        if args.model == 'idgnn':
+            out = (model.forward(batch, task.src_entity_table,
+                                task.dst_entity_table).detach().flatten())
+            scores = torch.zeros(batch_size, task.num_dst_nodes, device=out.device)
+            scores[batch[task.dst_entity_table].batch,
+                batch[task.dst_entity_table].n_id] = torch.sigmoid(out)
+        else:
+            # Get ground-truth
+            input_id = batch[task.src_entity_table].input_id
+            src_batch, dst_index = sparse_tensor[input_id]
+            scores = model(batch, task.src_entity_table, task.dst_entity_table).detach()
+            scores = torch.sigmoid(scores)
         _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
         pred_list.append(pred_mini)
     pred = torch.cat(pred_list, dim=0).cpu().numpy()
@@ -211,7 +222,7 @@ best_val_metric = 0
 for epoch in range(1, args.epochs + 1):
     train_loss = train()
     if epoch % args.eval_epochs_interval == 0:
-        val_pred = test(loader_dict["val"])
+        val_pred = test(loader_dict["val"], "val")
         val_metrics = task.evaluate(val_pred, task.get_table("val"))
         print(f"Epoch: {epoch:02d}, Train loss: {train_loss}, "
               f"Val metrics: {val_metrics}")
@@ -222,10 +233,10 @@ for epoch in range(1, args.epochs + 1):
 
 assert state_dict is not None
 model.load_state_dict(state_dict)
-val_pred = test(loader_dict["val"])
+val_pred = test(loader_dict["val"], "val")
 val_metrics = task.evaluate(val_pred, task.get_table("val"))
 print(f"Best Val metrics: {val_metrics}")
 
-test_pred = test(loader_dict["test"])
+test_pred = test(loader_dict["test"], "test")
 test_metrics = task.evaluate(test_pred)
 print(f"Best test metrics: {test_metrics}")
