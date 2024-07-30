@@ -210,10 +210,11 @@ def test(loader: NeighborLoader) -> np.ndarray:
         elif args.model == 'hybridgnn':
             # Get ground-truth
             out = model(batch, task.src_entity_table,
-                           task.dst_entity_table).detach()
+                        task.dst_entity_table).detach()
             scores = torch.sigmoid(out)
         else:
             raise ValueError(f"Unsupported model type: {args.model}.")
+
         _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
         pred_list.append(pred_mini)
     pred = torch.cat(pred_list, dim=0).cpu().numpy()
@@ -225,7 +226,7 @@ best_val_metric = 0
 for epoch in range(1, args.epochs + 1):
     train_loss = train()
     if epoch % args.eval_epochs_interval == 0:
-        val_pred = test(loader_dict["val"], "val")
+        val_pred = test(loader_dict["val"])
         val_metrics = task.evaluate(val_pred, task.get_table("val"))
         print(f"Epoch: {epoch:02d}, Train loss: {train_loss}, "
               f"Val metrics: {val_metrics}")
@@ -236,10 +237,10 @@ for epoch in range(1, args.epochs + 1):
 
 assert state_dict is not None
 model.load_state_dict(state_dict)
-val_pred = test(loader_dict["val"], "val")
+val_pred = test(loader_dict["val"])
 val_metrics = task.evaluate(val_pred, task.get_table("val"))
 print(f"Best Val metrics: {val_metrics}")
 
-test_pred = test(loader_dict["test"], "test")
+test_pred = test(loader_dict["test"])
 test_metrics = task.evaluate(test_pred)
 print(f"Best test metrics: {test_metrics}")
