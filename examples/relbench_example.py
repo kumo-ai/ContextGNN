@@ -123,10 +123,11 @@ if args.model == "idgnn":
 else:
     train_table = task.get_table("train")
     train_table_input = get_link_train_table_input(train_table, task)
-    model = HybridGNN(data=data, col_stats_dict=col_stats_dict,
-                      num_nodes=train_table_input.num_dst_nodes,
-                      num_layers=args.num_layers, channels=args.channels,
-                      aggr="sum", norm="layer_norm", embedding_dim=64)
+    model = HybridGNN(  # noqa
+        data=data, col_stats_dict=col_stats_dict,
+        num_nodes=train_table_input.num_dst_nodes, num_layers=args.num_layers,
+        channels=args.channels, aggr="sum", norm="layer_norm",
+        embedding_dim=64)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
