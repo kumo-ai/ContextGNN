@@ -86,11 +86,12 @@ def test_hybridgnn(tmp_path):
 
     assert len(batch[task.dst_entity_table].batch) > 0
 
-    channels = 64
+    channels = 16
+    embedding_dim = 8
     model = HybridGNN(data=data, col_stats_dict=col_stats_dict,
                       num_nodes=train_table_input.num_dst_nodes, num_layers=2,
                       channels=channels, aggr="sum", norm="layer_norm",
-                      embedding_dim=64)
+                      embedding_dim=embedding_dim)
     model.train()
 
     logits = model(batch, task.src_entity_table, task.dst_entity_table)

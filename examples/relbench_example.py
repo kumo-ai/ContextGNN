@@ -25,13 +25,20 @@ from torch_frame.config.text_embedder import TextEmbedderConfig
 from torch_geometric.loader import NeighborLoader
 from torch_geometric.seed import seed_everything
 from torch_geometric.typing import NodeType
+from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from tqdm import tqdm
 
-from hybridgnn.nn.models import IDGNN
+from hybridgnn.nn.models import IDGNN, HybridGNN
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-hm")
 parser.add_argument("--task", type=str, default="user-item-purchase")
+parser.add_argument(
+    "--model",
+    type=str,
+    default="hybridgnn",
+    choices=["hybridgnn", "idgnn"],
+)
 parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
@@ -103,15 +110,23 @@ for split in ["train", "val", "test"]:
         persistent_workers=args.num_workers > 0,
     )
 
-model = IDGNN(
-    data=data,
-    col_stats_dict=col_stats_dict,
-    num_layers=args.num_layers,
-    channels=args.channels,
-    out_channels=1,
-    aggr=args.aggr,
-    norm="layer_norm",
-).to(device)
+if args.model == "idgnn":
+    model = IDGNN(
+        data=data,
+        col_stats_dict=col_stats_dict,
+        num_layers=args.num_layers,
+        channels=args.channels,
+        out_channels=1,
+        aggr=args.aggr,
+        norm="layer_norm",
+    ).to(device)
+else:
+    train_table = task.get_table("train")
+    train_table_input = get_link_train_table_input(train_table, task)
+    model = HybridGNN(data=data, col_stats_dict=col_stats_dict,
+                      num_nodes=train_table_input.num_dst_nodes, num_layers=2,
+                      channels=128, aggr="sum", norm="layer_norm",
+                      embedding_dim=64)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 train_sparse_tensor = SparseTensor(dst_nodes_dict["train"][1], device=device)
@@ -125,31 +140,39 @@ def train() -> float:
     total_steps = min(len(loader_dict["train"]), args.max_steps_per_epoch)
     for batch in tqdm(loader_dict["train"], total=total_steps):
         batch = batch.to(device)
-        out = model(batch, task.src_entity_table,
-                    task.dst_entity_table).flatten()
-
-        batch_size = batch[task.src_entity_table].batch_size
 
         # Get ground-truth
         input_id = batch[task.src_entity_table].input_id
         src_batch, dst_index = train_sparse_tensor[input_id]
 
-        # Get target label
-        target = torch.isin(
-            batch[task.dst_entity_table].batch +
-            batch_size * batch[task.dst_entity_table].n_id,
-            src_batch + batch_size * dst_index,
-        ).float()
+        if args.model == 'idgnn':
+            out = model(batch, task.src_entity_table,
+                        task.dst_entity_table).flatten()
+            batch_size = batch[task.src_entity_table].batch_size
 
-        # Optimization
-        optimizer.zero_grad()
-        loss = F.binary_cross_entropy_with_logits(out, target)
+            # Get target label
+            target = torch.isin(
+                batch[task.dst_entity_table].batch +
+                batch_size * batch[task.dst_entity_table].n_id,
+                src_batch + batch_size * dst_index,
+            ).float()
+
+            # Optimization
+            optimizer.zero_grad()
+            loss = F.binary_cross_entropy_with_logits(out, target)
+            numel = out.numel()
+        else:
+            logits = model(batch, task.src_entity_table, task.dst_entity_table)
+            edge_label_index = torch.stack([src_batch, dst_index], dim=0)
+            optimizer.zero_grad()
+            loss = sparse_cross_entropy(logits, edge_label_index)
+            numel = len(batch[task.dst_entity_table].batch)
         loss.backward()
 
         optimizer.step()
 
-        loss_accum += float(loss) * out.numel()
-        count_accum += out.numel()
+        loss_accum += float(loss) * numel
+        count_accum += numel
 
         steps += 1
         if steps > args.max_steps_per_epoch:
