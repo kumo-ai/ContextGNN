@@ -4,7 +4,7 @@ import json
 import os
 import warnings
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
@@ -168,7 +168,7 @@ def train() -> float:
 def test(loader: NeighborLoader) -> np.ndarray:
     model.eval()
 
-    pred_list: list[Tensor] = []
+    pred_list: List[Tensor] = []
     for batch in tqdm(loader):
         batch = batch.to(device)
         out = (model.forward(batch, task.src_entity_table,
@@ -197,6 +197,7 @@ for epoch in range(1, args.epochs + 1):
             best_val_metric = val_metrics[tune_metric]
             state_dict = copy.deepcopy(model.state_dict())
 
+assert state_dict is not None
 model.load_state_dict(state_dict)
 val_pred = test(loader_dict["val"])
 val_metrics = task.evaluate(val_pred, task.get_table("val"))
