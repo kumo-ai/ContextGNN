@@ -1,4 +1,4 @@
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
 import torch
 from torch import Tensor
@@ -17,17 +17,10 @@ from hybridgnn.nn.models import HeteroGraphSAGE
 
 class HybridGNN(torch.nn.Module):
     r"""Implementation of HybridGNN model."""
-    def __init__(
-        self,
-        data: HeteroData,
-        col_stats_dict: Dict[str, Dict[str, Dict[StatType, Any]]],
-        num_nodes: int,
-        num_layers: int,
-        channels: int,
-        out_channels: int,
-        aggr: str,
-        norm: str,
-    ) -> None:
+    def __init__(self, data: HeteroData,
+                 col_stats_dict: Dict[str, Dict[str, Dict[StatType, Any]]],
+                 num_nodes: int, num_layers: int, channels: int, aggr: str,
+                 norm: str, embedding_dim: int) -> None:
         super().__init__()
 
         self.encoder = HeteroEncoder(
@@ -55,15 +48,16 @@ class HybridGNN(torch.nn.Module):
         )
         self.head = MLP(
             channels,
-            out_channels=out_channels,
+            out_channels=1,
             norm=norm,
             num_layers=1,
         )
+        self.lhs_projector = torch.nn.Linear(channels, embedding_dim)
 
         self.id_awareness_emb = torch.nn.Embedding(1, channels)
-        self.rhs_embedding = torch.nn.Embedding(num_nodes, channels)
-        self.lin_offset_idgnn = torch.nn.Linear(channels, 1)
-        self.lin_offset_embgnn = torch.nn.Linear(channels, 1)
+        self.rhs_embedding = torch.nn.Embedding(num_nodes, embedding_dim)
+        self.lin_offset_idgnn = torch.nn.Linear(embedding_dim, 1)
+        self.lin_offset_embgnn = torch.nn.Linear(embedding_dim, 1)
         self.channels = channels
 
         self.reset_parameters()
@@ -77,13 +71,14 @@ class HybridGNN(torch.nn.Module):
         self.rhs_embedding.reset_parameters()
         self.lin_offset_embgnn.reset_parameters()
         self.lin_offset_idgnn.reset_parameters()
+        self.lhs_projector.reset_parameters()
 
     def forward(
         self,
         batch: HeteroData,
         entity_table: NodeType,
         dst_table: NodeType,
-    ) -> Tuple[Tensor, Tensor, Tensor]:
+    ) -> Tensor:
         seed_time = batch[entity_table].seed_time
         x_dict = self.encoder(batch.tf_dict)
 
@@ -101,22 +96,29 @@ class HybridGNN(torch.nn.Module):
             batch.edge_index_dict,
         )
 
-        lhs_embedding = x_dict[entity_table]  # batch_size, channel
+        batch_size = seed_time.size(0)
+        lhs_embedding = x_dict[entity_table][:
+                                             batch_size]  # batch_size, channel
+        lhs_embedding_projected = self.lhs_projector(lhs_embedding)
         rhs_gnn_embedding = x_dict[dst_table]  # num_sampled_rhs, channel
         rhs_idgnn_index = batch.n_id_dict[dst_table]  # num_sampled_rhs
         lhs_idgnn_batch = batch.batch_dict[dst_table]  # batch_size
         rhs_embedding = self.rhs_embedding  # num_rhs_nodes, channel
 
-        embgnn_logits = lhs_embedding @ rhs_embedding.weight.t(
+        embgnn_logits = lhs_embedding_projected @ rhs_embedding.weight.t(
         )  # batch_size, num_rhs_nodes
 
         # Model the importance of embedding-GNN prediction for each lhs node
-        embgnn_offset_logits = self.lin_offset_embgnn(lhs_embedding).flatten()
+        embgnn_offset_logits = self.lin_offset_embgnn(
+            lhs_embedding_projected).flatten()
         embgnn_logits += embgnn_offset_logits.view(-1, 1)
 
         # Calculate idgnn logits
         idgnn_logits = self.head(
             rhs_gnn_embedding).flatten()  # num_sampled_rhs
+        # Because we are only doing 2 hop, we are not really sampling info from
+        # lhs therefore, we need to incorporate this information using
+        # lhs_embedding[lhs_idgnn_batch] * rhs_gnn_embedding
         idgnn_logits += (
             lhs_embedding[lhs_idgnn_batch] *  # num_sampled_rhs, channel
             rhs_gnn_embedding).sum(

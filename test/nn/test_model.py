@@ -89,8 +89,8 @@ def test_hybridgnn(tmp_path):
     channels = 64
     model = HybridGNN(data=data, col_stats_dict=col_stats_dict,
                       num_nodes=train_table_input.num_dst_nodes, num_layers=2,
-                      channels=channels, out_channels=1, aggr="sum",
-                      norm="layer_norm")
+                      channels=channels, aggr="sum", norm="layer_norm",
+                      embedding_dim=64)
     model.train()
 
     logits = model(batch, task.src_entity_table, task.dst_entity_table)
