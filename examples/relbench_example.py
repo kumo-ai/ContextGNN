@@ -92,10 +92,12 @@ num_neighbors = [
 
 loader_dict: Dict[str, NeighborLoader] = {}
 dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
+num_dst_nodes_dict: Dict[str, int] = {}
 for split in ["train", "val", "test"]:
     table = task.get_table(split)
     table_input = get_link_train_table_input(table, task)
     dst_nodes_dict[split] = table_input.dst_nodes
+    num_dst_nodes_dict[split] = table_input.num_dst_nodes
     loader_dict[split] = NeighborLoader(
         data,
         num_neighbors=num_neighbors,
@@ -123,10 +125,8 @@ if args.model == "idgnn":
         norm="layer_norm",
     ).to(device)
 elif args.model == 'hybridgnn':
-    train_table = task.get_table("train")
-    train_table_input = get_link_train_table_input(train_table, task)
     model = HybridGNN(data=data, col_stats_dict=col_stats_dict,
-                      num_nodes=train_table_input.num_dst_nodes,
+                      num_nodes=num_dst_nodes_dict["train"],
                       num_layers=args.num_layers, channels=args.channels,
                       aggr="sum", norm="layer_norm", embedding_dim=64)
 else:
