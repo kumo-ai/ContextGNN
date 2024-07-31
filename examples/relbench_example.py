@@ -242,9 +242,9 @@ for epoch in range(1, args.epochs + 1):
 
 assert state_dict is not None
 model.load_state_dict(state_dict)
-val_pred = test(loader_dict["val"], desc="Best Val")
+val_pred = test(loader_dict["val"], desc="Best val")
 val_metrics = task.evaluate(val_pred, task.get_table("val"))
-print(f"Best Val metrics: {val_metrics}")
+print(f"Best val metrics: {val_metrics}")
 
 test_pred = test(loader_dict["test"], desc="Test")
 test_metrics = task.evaluate(test_pred)
