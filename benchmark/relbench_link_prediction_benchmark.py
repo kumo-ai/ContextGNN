@@ -110,7 +110,7 @@ if args.model == "idgnn":
     }
     train_search_space = {
         "batch_size": [256, 512, 1024],
-        "base_lr": [0.001, 0.01],
+        "base_lr": [0.0001, 0.01],
         "gamma_rate": [0.9, 0.95, 1.],
     }
     model_cls = IDGNN
@@ -292,7 +292,11 @@ def objective(trial: optuna.trial.Trial) -> float:
         model_cfg[name] = trial.suggest_categorical(name, search_list)
     train_cfg = {}
     for name, search_list in train_search_space.items():
-        train_cfg[name] = trial.suggest_categorical(name, search_list)
+        if name != "base_lr":
+            train_cfg[name] = trial.suggest_categorical(name, search_list)
+        else:
+            train_cfg[name] = trial.suggest_loguniform(name, search_list[0],
+                                                       search_list[1])
 
     best_val_metric, _ = train_and_eval_with_cfg(model_cfg=model_cfg,
                                                  train_cfg=train_cfg,
