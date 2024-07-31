@@ -124,13 +124,13 @@ elif args.model == 'hybridgnn':
 
 
 def train(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
-          loader) -> float:
+          loader, num_dst_nodes: int) -> float:
     model.train()
 
     loss_accum = count_accum = 0
     steps = 0
     total_steps = min(len(loader), args.max_steps_per_epoch)
-    sparse_tensor = SparseTensor(dst_nodes_dict["train"][1], device=device)
+    sparse_tensor = SparseTensor(num_dst_nodes, device=device)
     for batch in tqdm(loader, total=total_steps):
         batch = batch.to(device)
 
@@ -252,7 +252,8 @@ def train_and_eval_with_cfg(
     best_val_metric = 0
 
     for epoch in range(1, args.epochs + 1):
-        train_loss = train(model, optimizer, loader_dict["train"])
+        train_loss = train(model, optimizer, loader_dict["train"],
+                           dst_nodes_dict["train"][1])
         val_metric = test(model, loader_dict["val"])
 
         if val_metric > best_val_metric:
