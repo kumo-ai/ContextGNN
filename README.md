@@ -29,7 +29,7 @@ python relbench_example.py --dataset rel-trial --task condition-sponsor-run --mo
 ## Install Instruction
 
 ```
-pip install .
+pip install e .
 pip install relbench[example]
 pip install optuna
 ```
