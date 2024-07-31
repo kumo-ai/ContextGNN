@@ -10,7 +10,7 @@ class GloveTextEmbedding:
     def __init__(self, device: Optional[torch.device] = None):
         self.model = SentenceTransformer(
             "sentence-transformers/average_word_embeddings_glove.6B.300d",
-            device=device,  # type: ignore[arg-type]
+            device=device,
         )
 
     def __call__(self, sentences: List[str]) -> Tensor:

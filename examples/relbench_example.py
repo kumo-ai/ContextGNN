@@ -18,7 +18,6 @@ from relbench.modeling.graph import (
 from relbench.modeling.loader import SparseTensor
 from relbench.modeling.utils import get_stype_proposal
 from relbench.tasks import get_task
-from text_embedder import GloveTextEmbedding
 from torch import Tensor
 from torch_frame import stype
 from torch_frame.config.text_embedder import TextEmbedderConfig
@@ -29,6 +28,7 @@ from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from tqdm import tqdm
 
 from hybridgnn.nn.models import IDGNN, HybridGNN
+from hybridgnn.utils import GloveTextEmbedding
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-trial")

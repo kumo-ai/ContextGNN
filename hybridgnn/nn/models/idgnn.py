@@ -23,8 +23,8 @@ class IDGNN(torch.nn.Module):
         num_layers: int,
         channels: int,
         out_channels: int,
-        aggr: str,
-        norm: str,
+        aggr: str = 'sum',
+        norm: str = 'layer_norm',
     ) -> None:
         super().__init__()
 
