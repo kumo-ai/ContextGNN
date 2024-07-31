@@ -125,7 +125,8 @@ class HybridGNN(torch.nn.Module):
                 dim=-1).flatten()  # num_sampled_rhs, channel
 
         # Model the importance of ID-GNN prediction for each lhs node
-        idgnn_offset_logits = self.lin_offset_idgnn(lhs_embedding).flatten()
+        idgnn_offset_logits = self.lin_offset_idgnn(
+            lhs_embedding_projected).flatten()
         idgnn_logits = idgnn_logits + idgnn_offset_logits[lhs_idgnn_batch]
 
         embgnn_logits[lhs_idgnn_batch, rhs_idgnn_index] = idgnn_logits
