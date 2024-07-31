@@ -36,8 +36,8 @@ TRAIN_CONFIG_KEYS = ["batch_size", "gamma_rate", "base_lr"]
 LINK_PREDICTION_METRIC = "link_prediction_map"
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="rel-stack")
-parser.add_argument("--task", type=str, default="user-post-comment")
+parser.add_argument("--dataset", type=str, default="rel-trial")
+parser.add_argument("--task", type=str, default="condition-sponsor-run")
 parser.add_argument(
     "--model",
     type=str,
@@ -259,6 +259,7 @@ def train_and_eval_with_cfg(
     lr_scheduler = ExponentialLR(optimizer, gamma=train_cfg["gamma_rate"])
 
     best_val_metric = 0
+    best_test_metric = 0
 
     for epoch in range(1, args.epochs + 1):
         train_loss = train(model, optimizer, loader_dict["train"],
