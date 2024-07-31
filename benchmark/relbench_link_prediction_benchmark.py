@@ -43,11 +43,11 @@ parser.add_argument(
     default="hybridgnn",
     choices=["hybridgnn", "idgnn"],
 )
-parser.add_argument("--epochs", type=int, default=20)
-parser.add_argument('--num_trials', type=int, default=10,
+parser.add_argument("--epochs", type=int, default=2)
+parser.add_argument('--num_trials', type=int, default=2,
                     help='Number of Optuna-based hyper-parameter tuning.')
 parser.add_argument(
-    '--num_repeats', type=int, default=5,
+    '--num_repeats', type=int, default=2,
     help='Number of repeated training and eval on the best config.')
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--num_layers", type=int, default=2)
@@ -65,6 +65,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if torch.cuda.is_available():
     torch.set_num_threads(1)
 seed_everything(args.seed)
+
+if args.dataset == 'rel-trial':
+    args.num_layers = 4
 
 dataset: Dataset = get_dataset(args.dataset, download=True)
 task: RecommendationTask = get_task(args.dataset, args.task, download=True)
@@ -124,19 +127,18 @@ elif args.model == 'hybridgnn':
 
 
 def train(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
-          loader, num_dst_nodes: int) -> float:
+          loader, train_sparse_tensor) -> float:
     model.train()
 
     loss_accum = count_accum = 0
     steps = 0
     total_steps = min(len(loader), args.max_steps_per_epoch)
-    sparse_tensor = SparseTensor(num_dst_nodes, device=device)
     for batch in tqdm(loader, total=total_steps):
         batch = batch.to(device)
 
         # Get ground-truth
         input_id = batch[task.src_entity_table].input_id
-        src_batch, dst_index = sparse_tensor[input_id]
+        src_batch, dst_index = train_sparse_tensor[input_id]
 
         # Optimization
         optimizer.zero_grad()
@@ -181,7 +183,7 @@ def train(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
 
 
 @torch.no_grad()
-def test(model: torch.nn.Module, loader: NeighborLoader) -> np.ndarray:
+def test(model: torch.nn.Module, loader: NeighborLoader, stage: str):
     model.eval()
 
     pred_list: List[Tensor] = []
@@ -207,7 +209,9 @@ def test(model: torch.nn.Module, loader: NeighborLoader) -> np.ndarray:
         _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
         pred_list.append(pred_mini)
     pred = torch.cat(pred_list, dim=0).cpu().numpy()
-    return pred
+    
+    res = task.evaluate(pred, task.get_table(stage))
+    return res['link_prediction_map']
 
 
 def train_and_eval_with_cfg(
@@ -253,12 +257,13 @@ def train_and_eval_with_cfg(
 
     for epoch in range(1, args.epochs + 1):
         train_loss = train(model, optimizer, loader_dict["train"],
-                           dst_nodes_dict["train"][1])
-        val_metric = test(model, loader_dict["val"])
+                           SparseTensor(dst_nodes_dict["train"][1],
+                                        device=device))
+        val_metric = test(model, loader_dict["val"], "val")
 
         if val_metric > best_val_metric:
             best_val_metric = val_metric
-            best_test_metric = test(model, loader_dict["test"])
+            best_test_metric = test(model, loader_dict["test"], "test")
 
         lr_scheduler.step()
         print(f'Train Loss: {train_loss:.4f}, Val: {val_metric:.4f}')
