@@ -1,7 +1,7 @@
 """
 example command
 
-python relbench_example.py --dataset rel-trial --task site-sponsor-run --model hybridgnn
+python relbench_example.py --dataset rel-trial --task site-sponsor-run --model hybridgnn --epochs 10
 """
 
 import argparse
