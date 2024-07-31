@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import os.path as osp
 import time
 import warnings
 from pathlib import Path
@@ -44,8 +45,8 @@ parser.add_argument(
     default="hybridgnn",
     choices=["hybridgnn", "idgnn"],
 )
-parser.add_argument("--epochs", type=int, default=1)
-parser.add_argument("--num_trials", type=int, default=2,
+parser.add_argument("--epochs", type=int, default=20)
+parser.add_argument("--num_trials", type=int, default=10,
                     help="Number of Optuna-based hyper-parameter tuning.")
 parser.add_argument(
     "--num_repeats", type=int, default=5,
@@ -347,7 +348,9 @@ def main_gnn() -> None:
     # Save results
     if args.result_path != "":
         os.makedirs(args.result_path, exist_ok=True)
-        torch.save(result_dict, args.result_path)
+        torch.save(result_dict,
+                   osp.join(args.result_path,
+                            f"{args.dataset}_{args.task}_{args.model}"))
 
 
 if __name__ == "__main__":
