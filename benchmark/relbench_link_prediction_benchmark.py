@@ -44,11 +44,11 @@ parser.add_argument(
     default="hybridgnn",
     choices=["hybridgnn", "idgnn"],
 )
-parser.add_argument("--epochs", type=int, default=20)
-parser.add_argument('--num_trials', type=int, default=10,
+parser.add_argument("--epochs", type=int, default=2)
+parser.add_argument('--num_trials', type=int, default=2,
                     help='Number of Optuna-based hyper-parameter tuning.')
 parser.add_argument(
-    '--num_repeats', type=int, default=5,
+    '--num_repeats', type=int, default=2,
     help='Number of repeated training and eval on the best config.')
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--num_layers", type=int, default=2)
@@ -66,6 +66,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if torch.cuda.is_available():
     torch.set_num_threads(1)
 seed_everything(args.seed)
+
+if args.dataset == 'rel-trial':
+    args.num_layers = 4
 
 dataset: Dataset = get_dataset(args.dataset, download=True)
 task: RecommendationTask = get_task(args.dataset, args.task, download=True)
@@ -97,10 +100,6 @@ num_neighbors = [
     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
 ]
 
-loader_dict: Dict[str, NeighborLoader] = {}
-dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
-num_dst_nodes_dict: Dict[str, int] = {}
-
 model_cls: Union[IDGNN, HybridGNN]
 
 if args.model == 'idgnn':
@@ -129,19 +128,18 @@ elif args.model == 'hybridgnn':
 
 
 def train(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
-          loader) -> float:
+          loader, train_sparse_tensor) -> float:
     model.train()
 
     loss_accum = count_accum = 0
     steps = 0
     total_steps = min(len(loader), args.max_steps_per_epoch)
-    sparse_tensor = SparseTensor(dst_nodes_dict["train"][1], device=device)
     for batch in tqdm(loader, total=total_steps):
         batch = batch.to(device)
 
         # Get ground-truth
         input_id = batch[task.src_entity_table].input_id
-        src_batch, dst_index = sparse_tensor[input_id]
+        src_batch, dst_index = train_sparse_tensor[input_id]
 
         # Optimization
         optimizer.zero_grad()
@@ -186,7 +184,7 @@ def train(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
 
 
 @torch.no_grad()
-def test(model: torch.nn.Module, loader: NeighborLoader) -> np.ndarray:
+def test(model: torch.nn.Module, loader: NeighborLoader, stage: str):
     model.eval()
 
     pred_list: List[Tensor] = []
@@ -212,7 +210,9 @@ def test(model: torch.nn.Module, loader: NeighborLoader) -> np.ndarray:
         _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
         pred_list.append(pred_mini)
     pred = torch.cat(pred_list, dim=0).cpu().numpy()
-    return pred
+    
+    res = task.evaluate(pred, task.get_table(stage))
+    return res['link_prediction_map']
 
 
 def train_and_eval_with_cfg(
@@ -220,16 +220,9 @@ def train_and_eval_with_cfg(
     train_cfg: Dict[str, Any],
     trial: Optional[optuna.trial.Trial] = None,
 ) -> Tuple[float, float]:
-    if args.model == 'hybridgnn':
-        model_cfg['num_nodes'] = num_dst_nodes_dict["train"]
-    # Use model_cfg to set up training procedure
-    model = model_cls(**model_cfg, data=data, col_stats_dict=col_stats_dict,
-                      num_layers=args.num_layers, out_channels=1).to(device)
-    model.reset_parameters()
-    # Use train_cfg to set up training procedure
-    optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg['base_lr'])
-    lr_scheduler = ExponentialLR(optimizer, gamma=train_cfg['gamma_rate'])
-
+    loader_dict: Dict[str, NeighborLoader] = {}
+    dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
+    num_dst_nodes_dict: Dict[str, int] = {}
     for split in ["train", "val", "test"]:
         table = task.get_table(split)
         table_input = get_link_train_table_input(table, task)
@@ -249,15 +242,29 @@ def train_and_eval_with_cfg(
             persistent_workers=args.num_workers > 0,
         )
 
+    if args.model == 'hybridgnn':
+        model_cfg['num_nodes'] = num_dst_nodes_dict["train"]
+    elif args.model == 'idgnn':
+        model_cfg['out_channels'] = 1
+    # Use model_cfg to set up training procedure
+    model = model_cls(**model_cfg, data=data, col_stats_dict=col_stats_dict,
+                      num_layers=args.num_layers).to(device)
+    model.reset_parameters()
+    # Use train_cfg to set up training procedure
+    optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg['base_lr'])
+    lr_scheduler = ExponentialLR(optimizer, gamma=train_cfg['gamma_rate'])
+
     best_val_metric = 0
 
     for epoch in range(1, args.epochs + 1):
-        train_loss = train(model, optimizer, loader_dict["train"])
-        val_metric = test(model, loader_dict["val"])
+        train_loss = train(model, optimizer, loader_dict["train"],
+                           SparseTensor(dst_nodes_dict["train"][1],
+                                        device=device))
+        val_metric = test(model, loader_dict["val"], "val")
 
         if val_metric > best_val_metric:
             best_val_metric = val_metric
-            best_test_metric = test(model, loader_dict["test"])
+            best_test_metric = test(model, loader_dict["test"], "test")
 
         lr_scheduler.step()
         print(f'Train Loss: {train_loss:.4f}, Val: {val_metric:.4f}')
