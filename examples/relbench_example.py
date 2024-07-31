@@ -125,10 +125,16 @@ if args.model == "idgnn":
         norm="layer_norm",
     ).to(device)
 elif args.model == 'hybridgnn':
-    model = HybridGNN(data=data, col_stats_dict=col_stats_dict,
-                      num_nodes=num_dst_nodes_dict["train"],
-                      num_layers=args.num_layers, channels=args.channels,
-                      aggr="sum", norm="layer_norm", embedding_dim=64)
+    model = HybridGNN(
+        data=data,
+        col_stats_dict=col_stats_dict,
+        num_nodes=num_dst_nodes_dict["train"],
+        num_layers=args.num_layers,
+        channels=args.channels,
+        aggr="sum",
+        norm="layer_norm",
+        embedding_dim=64,
+    ).to(device)
 else:
     raise ValueError(f"Unsupported model type {args.model}.")
 
