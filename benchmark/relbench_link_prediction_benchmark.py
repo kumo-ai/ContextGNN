@@ -341,7 +341,7 @@ def main_gnn():
     print(result_dict)
     # Save results
     if args.result_path != '':
-        os.makedirs(os.path.dirname(args.result_path), exist_ok=True)
+        os.makedirs(args.result_path, exist_ok=True)
         torch.save(result_dict, args.result_path)
 
 
