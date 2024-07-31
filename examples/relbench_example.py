@@ -1,3 +1,9 @@
+"""
+example command
+
+python relbench_example.py --dataset rel-trial --task site-sponsor-run --model hybridgnn
+"""
+
 import argparse
 import copy
 import json
