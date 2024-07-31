@@ -55,7 +55,7 @@ parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--num_layers", type=int, default=2)
 parser.add_argument("--num_neighbors", type=int, default=128)
 parser.add_argument("--temporal_strategy", type=str, default="last", choices=["last", "uniform"])
-parser.add_argument("--max_steps_per_epoch", type=int, default=3)
+parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
 parser.add_argument("--num_workers", type=int, default=0)
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--cache_dir", type=str,
@@ -263,9 +263,10 @@ def train_and_eval_with_cfg(
     best_test_metric = 0
 
     for epoch in range(1, args.epochs + 1):
+        train_sparse_tensor = SparseTensor(dst_nodes_dict["train"][1],
+                                        device=device)
         train_loss = train(model, optimizer, loader_dict["train"],
-                           SparseTensor(dst_nodes_dict["train"][1],
-                                        device=device))
+                           train_sparse_tensor)
         val_metric = test(model, loader_dict["val"], "val")
 
         if val_metric > best_val_metric:
