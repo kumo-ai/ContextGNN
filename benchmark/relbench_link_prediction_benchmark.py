@@ -43,11 +43,11 @@ parser.add_argument(
     default="hybridgnn",
     choices=["hybridgnn", "idgnn"],
 )
-parser.add_argument("--epochs", type=int, default=2)
-parser.add_argument('--num_trials', type=int, default=2,
+parser.add_argument("--epochs", type=int, default=20)
+parser.add_argument('--num_trials', type=int, default=10,
                     help='Number of Optuna-based hyper-parameter tuning.')
 parser.add_argument(
-    '--num_repeats', type=int, default=2,
+    '--num_repeats', type=int, default=5,
     help='Number of repeated training and eval on the best config.')
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--num_layers", type=int, default=2)
@@ -58,7 +58,7 @@ parser.add_argument("--num_workers", type=int, default=0)
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--cache_dir", type=str,
                     default=os.path.expanduser("~/.cache/relbench_examples"))
-parser.add_argument('--result_path', type=str, default='')
+parser.add_argument('--result_path', type=str, default='result')
 args = parser.parse_args()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
