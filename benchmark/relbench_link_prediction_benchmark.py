@@ -99,24 +99,6 @@ num_neighbors = [
 loader_dict: Dict[str, NeighborLoader] = {}
 dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
 num_dst_nodes_dict: Dict[str, int] = {}
-for split in ["train", "val", "test"]:
-    table = task.get_table(split)
-    table_input = get_link_train_table_input(table, task)
-    dst_nodes_dict[split] = table_input.dst_nodes
-    num_dst_nodes_dict[split] = table_input.num_dst_nodes
-    loader_dict[split] = NeighborLoader(
-        data,
-        num_neighbors=num_neighbors,
-        time_attr="time",
-        input_nodes=table_input.src_nodes,
-        input_time=table_input.src_time,
-        subgraph_type="bidirectional",
-        batch_size=args.batch_size,
-        temporal_strategy=args.temporal_strategy,
-        shuffle=split == "train",
-        num_workers=args.num_workers,
-        persistent_workers=args.num_workers > 0,
-    )
 
 model_cls: Union[IDGNN, HybridGNN]
 
@@ -145,14 +127,15 @@ elif args.model == 'hybridgnn':
     model_cls = HybridGNN
 
 
-def train(model: torch.nn.Module, optimizer: torch.optim.Optimizer) -> float:
+def train(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
+          loader) -> float:
     model.train()
 
     loss_accum = count_accum = 0
     steps = 0
-    total_steps = min(len(loader_dict["train"]), args.max_steps_per_epoch)
+    total_steps = min(len(loader), args.max_steps_per_epoch)
     sparse_tensor = SparseTensor(dst_nodes_dict["train"][1], device=device)
-    for batch in tqdm(loader_dict["train"], total=total_steps):
+    for batch in tqdm(loader, total=total_steps):
         batch = batch.to(device)
 
         # Get ground-truth
@@ -246,10 +229,29 @@ def train_and_eval_with_cfg(
     optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg['base_lr'])
     lr_scheduler = ExponentialLR(optimizer, gamma=train_cfg['gamma_rate'])
 
+    for split in ["train", "val", "test"]:
+        table = task.get_table(split)
+        table_input = get_link_train_table_input(table, task)
+        dst_nodes_dict[split] = table_input.dst_nodes
+        num_dst_nodes_dict[split] = table_input.num_dst_nodes
+        loader_dict[split] = NeighborLoader(
+            data,
+            num_neighbors=num_neighbors,
+            time_attr="time",
+            input_nodes=table_input.src_nodes,
+            input_time=table_input.src_time,
+            subgraph_type="bidirectional",
+            batch_size=train_cfg['batch_size'],
+            temporal_strategy=args.temporal_strategy,
+            shuffle=split == "train",
+            num_workers=args.num_workers,
+            persistent_workers=args.num_workers > 0,
+        )
+
     best_val_metric = 0
 
     for epoch in range(1, args.epochs + 1):
-        train_loss = train(model, optimizer)
+        train_loss = train(model, optimizer, loader_dict["train"])
         val_metric = test(model, loader_dict["val"])
 
         if val_metric > best_val_metric:
