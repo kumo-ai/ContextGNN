@@ -19,8 +19,9 @@ class HybridGNN(torch.nn.Module):
     r"""Implementation of HybridGNN model."""
     def __init__(self, data: HeteroData,
                  col_stats_dict: Dict[str, Dict[str, Dict[StatType, Any]]],
-                 num_nodes: int, num_layers: int, channels: int, aggr: str,
-                 norm: str, embedding_dim: int) -> None:
+                 num_nodes: int, num_layers: int, channels: int,
+                 embedding_dim: int, aggr: str = 'sum',
+                 norm: str = 'layer_norm') -> None:
         super().__init__()
 
         self.encoder = HeteroEncoder(

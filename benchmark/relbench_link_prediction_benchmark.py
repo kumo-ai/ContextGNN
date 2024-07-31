@@ -239,9 +239,11 @@ def train_and_eval_with_cfg(
 
     if args.model == 'hybridgnn':
         model_cfg['num_nodes'] = num_dst_nodes_dict["train"]
+    elif args.model == 'idgnn':
+        model_cfg['out_channels'] = 1
     # Use model_cfg to set up training procedure
     model = model_cls(**model_cfg, data=data, col_stats_dict=col_stats_dict,
-                      num_layers=args.num_layers, out_channels=1).to(device)
+                      num_layers=args.num_layers).to(device)
     model.reset_parameters()
     # Use train_cfg to set up training procedure
     optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg['base_lr'])
