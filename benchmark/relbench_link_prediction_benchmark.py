@@ -33,6 +33,7 @@ from hybridgnn.nn.models import IDGNN, HybridGNN
 from hybridgnn.utils import GloveTextEmbedding
 
 TRAIN_CONFIG_KEYS = ["batch_size", "gamma_rate", "base_lr"]
+LINK_PREDICTION_METRIC = "link_prediction_map"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-stack")
@@ -68,7 +69,7 @@ seed_everything(args.seed)
 
 dataset: Dataset = get_dataset(args.dataset, download=True)
 task: RecommendationTask = get_task(args.dataset, args.task, download=True)
-tune_metric = "link_prediction_map"
+tune_metric = LINK_PREDICTION_METRIC
 assert task.task_type == TaskType.LINK_PREDICTION
 
 stypes_cache_path = Path(f"{args.cache_dir}/{args.dataset}/stypes.json")
