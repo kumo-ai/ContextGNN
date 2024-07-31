@@ -38,6 +38,7 @@ dev=[
 full=[
     "relbench==1.1.0",
     "sentence-transformers",
+    "optuna",
 ]
 
 [project.urls]
