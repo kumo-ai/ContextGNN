@@ -96,10 +96,6 @@ num_neighbors = [
     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
 ]
 
-loader_dict: Dict[str, NeighborLoader] = {}
-dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
-num_dst_nodes_dict: Dict[str, int] = {}
-
 model_cls: Union[IDGNN, HybridGNN]
 
 if args.model == 'idgnn':
@@ -219,16 +215,9 @@ def train_and_eval_with_cfg(
     train_cfg: Dict[str, Any],
     trial: Optional[optuna.trial.Trial] = None,
 ) -> Tuple[float, float]:
-    if args.model == 'hybridgnn':
-        model_cfg['num_nodes'] = num_dst_nodes_dict["train"]
-    # Use model_cfg to set up training procedure
-    model = model_cls(**model_cfg, data=data, col_stats_dict=col_stats_dict,
-                      num_layers=args.num_layers, out_channels=1).to(device)
-    model.reset_parameters()
-    # Use train_cfg to set up training procedure
-    optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg['base_lr'])
-    lr_scheduler = ExponentialLR(optimizer, gamma=train_cfg['gamma_rate'])
-
+    loader_dict: Dict[str, NeighborLoader] = {}
+    dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
+    num_dst_nodes_dict: Dict[str, int] = {}
     for split in ["train", "val", "test"]:
         table = task.get_table(split)
         table_input = get_link_train_table_input(table, task)
@@ -247,6 +236,16 @@ def train_and_eval_with_cfg(
             num_workers=args.num_workers,
             persistent_workers=args.num_workers > 0,
         )
+
+    if args.model == 'hybridgnn':
+        model_cfg['num_nodes'] = num_dst_nodes_dict["train"]
+    # Use model_cfg to set up training procedure
+    model = model_cls(**model_cfg, data=data, col_stats_dict=col_stats_dict,
+                      num_layers=args.num_layers, out_channels=1).to(device)
+    model.reset_parameters()
+    # Use train_cfg to set up training procedure
+    optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg['base_lr'])
+    lr_scheduler = ExponentialLR(optimizer, gamma=train_cfg['gamma_rate'])
 
     best_val_metric = 0
 
