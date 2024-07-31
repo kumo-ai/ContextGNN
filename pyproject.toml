@@ -21,10 +21,9 @@ classifiers=[
     "License :: OSI Approved :: MIT License",
 ]
 dependencies=[
-	"pandas",
-	"numpy",
-	"scikit-learn",
-	"typing-extensions",
+    "numpy",
+    "torch-geometric",
+    "pytorch-frame>=0.2.3",
 ]
 
 [project.optional-dependencies]
@@ -37,9 +36,9 @@ dev=[
     "pre-commit",
 ]
 full=[
-    "pytorch_frame>=0.2.3",
-    "torch_geometric",
-    "relbench==1.0.0rc1",
+    "relbench==1.1.0",
+    "sentence-transformers",
+    "optuna",
 ]
 
 [project.urls]
@@ -64,7 +63,7 @@ ignore = [
     "D107",  # Ignore "Missing docstring in __init__"
     "D205",  # Ignore "blank line required between summary line and description"
 ]
-src = ["torch_frame"]
+src = ["hybridgnn"]
 line-length = 80
 indent-width = 4
 target-version = "py38"
@@ -90,7 +89,7 @@ skip = [".gitignore", "__init__.py"]
 ignore = ["F811", "W503", "W504"]
 
 [tool.mypy]
-files = ["torch_frame"]
+files = ["hybridgnn"]
 install_types = true
 non_interactive = true
 ignore_missing_imports = true

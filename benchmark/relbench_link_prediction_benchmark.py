@@ -44,22 +44,22 @@ parser.add_argument(
     default="hybridgnn",
     choices=["hybridgnn", "idgnn"],
 )
-parser.add_argument("--epochs", type=int, default=20)
-parser.add_argument('--num_trials', type=int, default=10,
-                    help='Number of Optuna-based hyper-parameter tuning.')
+parser.add_argument("--epochs", type=int, default=1)
+parser.add_argument("--num_trials", type=int, default=2,
+                    help="Number of Optuna-based hyper-parameter tuning.")
 parser.add_argument(
-    '--num_repeats', type=int, default=5,
-    help='Number of repeated training and eval on the best config.')
+    "--num_repeats", type=int, default=5,
+    help="Number of repeated training and eval on the best config.")
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--num_layers", type=int, default=2)
 parser.add_argument("--num_neighbors", type=int, default=128)
-parser.add_argument("--temporal_strategy", type=str, default="last")
-parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
+parser.add_argument("--temporal_strategy", type=str, default="last", choices=["last", "uniform"])
+parser.add_argument("--max_steps_per_epoch", type=int, default=3)
 parser.add_argument("--num_workers", type=int, default=0)
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--cache_dir", type=str,
                     default=os.path.expanduser("~/.cache/relbench_examples"))
-parser.add_argument('--result_path', type=str, default='result')
+parser.add_argument("--result_path", type=str, default="result")
 args = parser.parse_args()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -67,7 +67,7 @@ if torch.cuda.is_available():
     torch.set_num_threads(1)
 seed_everything(args.seed)
 
-if args.dataset == 'rel-trial':
+if args.dataset == "rel-trial":
     args.num_layers = 4
 
 dataset: Dataset = get_dataset(args.dataset, download=True)
@@ -102,39 +102,43 @@ num_neighbors = [
 
 model_cls: Union[IDGNN, HybridGNN]
 
-if args.model == 'idgnn':
+if args.model == "idgnn":
     model_search_space = {
-        'channels': [64, 128, 256],
-        'norm': ['layer_norm', 'batch_norm']
+        "channels": [64, 128, 256],
+        "norm": ["layer_norm", "batch_norm"]
     }
     train_search_space = {
-        'batch_size': [256, 512, 1024],
-        'base_lr': [0.001, 0.01],
-        'gamma_rate': [0.9, 0.95, 1.],
+        "batch_size": [256, 512, 1024],
+        "base_lr": [0.001, 0.01],
+        "gamma_rate": [0.9, 0.95, 1.],
     }
     model_cls = IDGNN
-elif args.model == 'hybridgnn':
+elif args.model == "hybridgnn":
     model_search_space = {
-        'channels': [64, 128, 256],
-        'embedding_dim': [64, 128, 256],
-        'norm': ['layer_norm', 'batch_norm']
+        "channels": [64, 128, 256],
+        "embedding_dim": [64, 128, 256],
+        "norm": ["layer_norm", "batch_norm"]
     }
     train_search_space = {
-        'batch_size': [256, 512, 1024],
-        'base_lr': [0.001, 0.01],
-        'gamma_rate': [0.9, 0.95, 1.],
+        "batch_size": [256, 512, 1024],
+        "base_lr": [0.001, 0.01],
+        "gamma_rate": [0.9, 0.95, 1.],
     }
     model_cls = HybridGNN
 
 
-def train(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
-          loader, train_sparse_tensor) -> float:
+def train(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    loader: NeighborLoader,
+    train_sparse_tensor: SparseTensor,
+) -> float:
     model.train()
 
     loss_accum = count_accum = 0
     steps = 0
     total_steps = min(len(loader), args.max_steps_per_epoch)
-    for batch in tqdm(loader, total=total_steps):
+    for batch in tqdm(loader, total=total_steps, desc="Train"):
         batch = batch.to(device)
 
         # Get ground-truth
@@ -144,7 +148,7 @@ def train(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
         # Optimization
         optimizer.zero_grad()
 
-        if args.model == 'idgnn':
+        if args.model == "idgnn":
             out = model(batch, task.src_entity_table,
                         task.dst_entity_table).flatten()
             batch_size = batch[task.src_entity_table].batch_size
@@ -184,22 +188,22 @@ def train(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
 
 
 @torch.no_grad()
-def test(model: torch.nn.Module, loader: NeighborLoader, stage: str):
+def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
     model.eval()
 
     pred_list: List[Tensor] = []
-    for batch in tqdm(loader):
+    for batch in tqdm(loader, desc=stage):
         batch = batch.to(device)
         batch_size = batch[task.src_entity_table].batch_size
 
-        if args.model == 'idgnn':
+        if args.model == "idgnn":
             out = (model.forward(batch, task.src_entity_table,
                                  task.dst_entity_table).detach().flatten())
             scores = torch.zeros(batch_size, task.num_dst_nodes,
                                  device=out.device)
             scores[batch[task.dst_entity_table].batch,
                    batch[task.dst_entity_table].n_id] = torch.sigmoid(out)
-        elif args.model == 'hybridgnn':
+        elif args.model == "hybridgnn":
             # Get ground-truth
             out = model(batch, task.src_entity_table,
                         task.dst_entity_table).detach()
@@ -209,10 +213,10 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str):
 
         _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
         pred_list.append(pred_mini)
+
     pred = torch.cat(pred_list, dim=0).cpu().numpy()
-    
     res = task.evaluate(pred, task.get_table(stage))
-    return res['link_prediction_map']
+    return res[LINK_PREDICTION_METRIC]
 
 
 def train_and_eval_with_cfg(
@@ -235,24 +239,24 @@ def train_and_eval_with_cfg(
             input_nodes=table_input.src_nodes,
             input_time=table_input.src_time,
             subgraph_type="bidirectional",
-            batch_size=train_cfg['batch_size'],
+            batch_size=train_cfg["batch_size"],
             temporal_strategy=args.temporal_strategy,
             shuffle=split == "train",
             num_workers=args.num_workers,
             persistent_workers=args.num_workers > 0,
         )
 
-    if args.model == 'hybridgnn':
-        model_cfg['num_nodes'] = num_dst_nodes_dict["train"]
-    elif args.model == 'idgnn':
-        model_cfg['out_channels'] = 1
+    if args.model == "hybridgnn":
+        model_cfg["num_nodes"] = num_dst_nodes_dict["train"]
+    elif args.model == "idgnn":
+        model_cfg["out_channels"] = 1
     # Use model_cfg to set up training procedure
     model = model_cls(**model_cfg, data=data, col_stats_dict=col_stats_dict,
                       num_layers=args.num_layers).to(device)
     model.reset_parameters()
     # Use train_cfg to set up training procedure
-    optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg['base_lr'])
-    lr_scheduler = ExponentialLR(optimizer, gamma=train_cfg['gamma_rate'])
+    optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg["base_lr"])
+    lr_scheduler = ExponentialLR(optimizer, gamma=train_cfg["gamma_rate"])
 
     best_val_metric = 0
 
@@ -267,7 +271,7 @@ def train_and_eval_with_cfg(
             best_test_metric = test(model, loader_dict["test"], "test")
 
         lr_scheduler.step()
-        print(f'Train Loss: {train_loss:.4f}, Val: {val_metric:.4f}')
+        print(f"Train Loss: {train_loss:.4f}, Val: {val_metric:.4f}")
 
         if trial is not None:
             trial.report(val_metric, epoch)
@@ -275,7 +279,7 @@ def train_and_eval_with_cfg(
                 raise optuna.TrialPruned()
 
     print(
-        f'Best val: {best_val_metric:.4f}, Best test: {best_test_metric:.4f}')
+        f"Best val: {best_val_metric:.4f}, Best test: {best_test_metric:.4f}")
     return best_val_metric, best_test_metric
 
 
@@ -293,7 +297,7 @@ def objective(trial: optuna.trial.Trial) -> float:
     return best_val_metric
 
 
-def main_gnn():
+def main_gnn() -> None:
     # Hyper-parameter optimization with Optuna
     print("Hyper-parameter search via Optuna")
     start_time = time.time()
@@ -327,25 +331,25 @@ def main_gnn():
     best_test_metrics = np.array(best_test_metrics)
 
     result_dict = {
-        'args': args.__dict__,
-        'best_val_metrics': best_val_metrics,
-        'best_test_metrics': best_test_metrics,
-        'best_val_metric': best_val_metrics.mean(),
-        'best_test_metric': best_test_metrics.mean(),
-        'best_train_cfg': best_train_cfg,
-        'best_model_cfg': best_model_cfg,
-        'search_time': search_time,
-        'final_model_time': final_model_time,
-        'total_time': search_time + final_model_time,
+        "args": args.__dict__,
+        "best_val_metrics": best_val_metrics,
+        "best_test_metrics": best_test_metrics,
+        "best_val_metric": best_val_metrics.mean(),
+        "best_test_metric": best_test_metrics.mean(),
+        "best_train_cfg": best_train_cfg,
+        "best_model_cfg": best_model_cfg,
+        "search_time": search_time,
+        "final_model_time": final_model_time,
+        "total_time": search_time + final_model_time,
     }
     print(result_dict)
     # Save results
-    if args.result_path != '':
+    if args.result_path != "":
         os.makedirs(args.result_path, exist_ok=True)
         torch.save(result_dict, args.result_path)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     print(args)
     if os.path.exists(args.result_path):
         exit(-1)
