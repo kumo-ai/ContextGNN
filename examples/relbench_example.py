@@ -124,7 +124,7 @@ if args.model == "idgnn":
         aggr=args.aggr,
         norm="layer_norm",
     ).to(device)
-elif args.model == 'hybridgnn':
+elif args.model == "hybridgnn":
     model = HybridGNN(
         data=data,
         col_stats_dict=col_stats_dict,
@@ -148,7 +148,7 @@ def train() -> float:
     steps = 0
     total_steps = min(len(loader_dict["train"]), args.max_steps_per_epoch)
     sparse_tensor = SparseTensor(dst_nodes_dict["train"][1], device=device)
-    for batch in tqdm(loader_dict["train"], total=total_steps):
+    for batch in tqdm(loader_dict["train"], total=total_steps, desc="Train"):
         batch = batch.to(device)
 
         # Get ground-truth
@@ -198,23 +198,22 @@ def train() -> float:
 
 
 @torch.no_grad()
-def test(loader: NeighborLoader) -> np.ndarray:
+def test(loader: NeighborLoader, desc: str) -> np.ndarray:
     model.eval()
 
     pred_list: List[Tensor] = []
-    for batch in tqdm(loader):
+    for batch in tqdm(loader, desc=desc):
         batch = batch.to(device)
         batch_size = batch[task.src_entity_table].batch_size
 
-        if args.model == 'idgnn':
+        if args.model == "idgnn":
             out = (model.forward(batch, task.src_entity_table,
                                  task.dst_entity_table).detach().flatten())
             scores = torch.zeros(batch_size, task.num_dst_nodes,
                                  device=out.device)
             scores[batch[task.dst_entity_table].batch,
                    batch[task.dst_entity_table].n_id] = torch.sigmoid(out)
-        elif args.model == 'hybridgnn':
-            # Get ground-truth
+        elif args.model == "hybridgnn":
             out = model(batch, task.src_entity_table,
                         task.dst_entity_table).detach()
             scores = torch.sigmoid(out)
@@ -232,21 +231,21 @@ best_val_metric = 0
 for epoch in range(1, args.epochs + 1):
     train_loss = train()
     if epoch % args.eval_epochs_interval == 0:
-        val_pred = test(loader_dict["val"])
+        val_pred = test(loader_dict["val"], desc="Val")
         val_metrics = task.evaluate(val_pred, task.get_table("val"))
         print(f"Epoch: {epoch:02d}, Train loss: {train_loss}, "
               f"Val metrics: {val_metrics}")
 
         if val_metrics[tune_metric] > best_val_metric:
             best_val_metric = val_metrics[tune_metric]
-            state_dict = copy.deepcopy(model.state_dict())
+            state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
 
 assert state_dict is not None
 model.load_state_dict(state_dict)
-val_pred = test(loader_dict["val"])
+val_pred = test(loader_dict["val"], desc="Best Val")
 val_metrics = task.evaluate(val_pred, task.get_table("val"))
 print(f"Best Val metrics: {val_metrics}")
 
-test_pred = test(loader_dict["test"])
+test_pred = test(loader_dict["test"], desc="Test")
 test_metrics = task.evaluate(test_pred)
 print(f"Best test metrics: {test_metrics}")
