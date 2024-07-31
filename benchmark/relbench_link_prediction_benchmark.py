@@ -355,6 +355,4 @@ def main_gnn() -> None:
 
 if __name__ == "__main__":
     print(args)
-    if os.path.exists(args.result_path):
-        exit(-1)
     main_gnn()
