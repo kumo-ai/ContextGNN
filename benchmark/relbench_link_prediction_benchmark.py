@@ -1,10 +1,11 @@
 import argparse
 import json
 import os
+import os.path as osp
 import time
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import numpy as np
 import optuna
@@ -37,15 +38,15 @@ from torch.utils.tensorboard import SummaryWriter
 LINK_PREDICTION_METRIC = "link_prediction_map"
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="rel-stack")
-parser.add_argument("--task", type=str, default="user-post-comment")
+parser.add_argument("--dataset", type=str, default="rel-trial")
+parser.add_argument("--task", type=str, default="condition-sponsor-run")
 parser.add_argument(
     "--model",
     type=str,
     default="hybridgnn",
     choices=["hybridgnn", "idgnn"],
 )
-parser.add_argument("--epochs", type=int, default=1)
+parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--num_trials", type=int, default=10,
                     help="Number of Optuna-based hyper-parameter tuning.")
 parser.add_argument(
@@ -54,8 +55,9 @@ parser.add_argument(
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--num_layers", type=int, default=2)
 parser.add_argument("--num_neighbors", type=int, default=128)
-parser.add_argument("--temporal_strategy", type=str, default="last", choices=["last", "uniform"])
-parser.add_argument("--max_steps_per_epoch", type=int, default=3)
+parser.add_argument("--temporal_strategy", type=str, default="last",
+                    choices=["last", "uniform"])
+parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
 parser.add_argument("--num_workers", type=int, default=0)
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--cache_dir", type=str,
@@ -102,14 +104,14 @@ num_neighbors = [
     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
 ]
 
-model_cls: Union[IDGNN, HybridGNN]
+model_cls: Type[Union[IDGNN, HybridGNN]]
 
 if args.model == "idgnn":
     search_space = {
         "channels": [64, 128, 256],
         "norm": ["layer_norm", "batch_norm"],
         "batch_size": [256, 512, 1024],
-        "base_lr": [0.001, 0.01],
+        "base_lr": [0.0001, 0.01],
         "gamma_rate": [0.9, 0.95, 1.],
     }
     model_cls = IDGNN
@@ -271,7 +273,8 @@ def train_and_eval_with_cfg(
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg["base_lr"])
     lr_scheduler = ExponentialLR(optimizer, gamma=cfg["gamma_rate"])
 
-    best_val_metric = 0
+    best_val_metric: float = 0.0
+    best_test_metric: float = 0.0
 
     for epoch in range(1, args.epochs + 1):
         train_loss = train(
@@ -344,8 +347,8 @@ def main_gnn() -> None:
         best_test_metrics.append(best_test_metric)
     end_time = time.time()
     final_model_time = (end_time - start_time) / args.num_repeats
-    best_val_metrics = np.array(best_val_metrics)
-    best_test_metrics = np.array(best_test_metrics)
+    best_val_metrics_array = np.array(best_val_metrics)
+    best_test_metrics_array = np.array(best_test_metrics)
 
     result_dict = {
         "args": args.__dict__,
@@ -354,22 +357,27 @@ def main_gnn() -> None:
         "best_val_metric": best_val_metrics.mean(),
         "best_test_metric": best_test_metrics.mean(),
         "best_cfg": best_cfg,
-        # "search_time": search_time,
+        "search_time": search_time,
+        "best_val_metrics": best_val_metrics_array,
+        "best_test_metrics": best_test_metrics_array,
+        "best_val_metric": best_val_metrics_array.mean(),
+        "best_test_metric": best_test_metrics_array.mean(),
+        "best_train_cfg": best_train_cfg,
+        "best_model_cfg": best_model_cfg,
+        "search_time": search_time,
         "final_model_time": final_model_time,
-        # "total_time": search_time + final_model_time,
     }
     print(result_dict)
-
-    if args.result_path:
-        os.makedirs(os.path.dirname(os.path.abspath(args.result_path)), exist_ok=True)
-        torch.save(result_dict, args.result_path)
+    if args.result_path != "":
+        os.makedirs(args.result_path, exist_ok=True)
+        torch.save(
+            result_dict,
+            osp.join(args.result_path,
+                     f"{args.dataset}_{args.task}_{args.model}"))
 
 
 if __name__ == "__main__":
     print(args)
-    if os.path.exists(args.result_path):
-        print(f"Result file {args.result_path} already exists.")
-        exit(-1)
     main_gnn()
 
 # === hybridgnn ===
