@@ -283,6 +283,7 @@ def train_and_eval_with_cfg(
             loader_dict["train"],
             SparseTensor(dst_nodes_dict["train"][1], device=device),
         )
+        optimizer.zero_grad()
         val_metric = test(model, loader_dict["val"], "val")
 
         if val_metric > best_val_metric:
