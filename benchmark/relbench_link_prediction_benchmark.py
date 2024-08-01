@@ -338,7 +338,6 @@ def main_gnn() -> None:
     )
     study.optimize(objective, n_trials=args.num_trials)
     best_cfg = study.best_params
-    best_cfg =  {'channels': 128, 'embedding_dim': 32, 'norm': 'layer_norm', 'batch_size': 64, 'base_lr': 0.01, 'gamma_rate': 0.95}
     search_time = time.time() - start_time
     print("Hyper-parameter search done. Found the best config.")
 
