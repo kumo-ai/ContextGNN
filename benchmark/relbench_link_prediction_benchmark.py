@@ -141,7 +141,7 @@ def train(
     loss_accum = count_accum = 0
     steps = 0
     total_steps = min(len(loader), args.max_steps_per_epoch)
-    for batch in tqdm(loader, total=total_steps, desc="train"):
+    for batch in tqdm(loader, total=total_steps, desc="Train"):
         batch = batch.to(device)
 
         # Get ground-truth
@@ -322,7 +322,7 @@ def objective(trial: optuna.trial.Trial) -> float:
 
 def main_gnn() -> None:
     # Hyper-parameter optimization with Optuna
-    # print("Hyper-parameter search via Optuna")
+    print("Hyper-parameter search via Optuna")
     # start_time = time.time()
     # study = optuna.create_study(
     #     pruner=optuna.pruners.MedianPruner(),
@@ -331,10 +331,10 @@ def main_gnn() -> None:
     # )
     # study.optimize(objective, n_trials=args.num_trials)
     # end_time = time.time()
-    # search_time = end_time - start_time
-    # print("Hyper-parameter search done. Found the best config.")
     # best_cfg = study.best_params
     best_cfg =  {'channels': 128, 'embedding_dim': 32, 'norm': 'layer_norm', 'batch_size': 64, 'base_lr': 0.01, 'gamma_rate': 0.95}
+    search_time = end_time - start_time
+    print("Hyper-parameter search done. Found the best config.")
 
     print(f"Repeat experiments {args.num_repeats} times with the best config "
           f"config {best_cfg}.")
@@ -352,18 +352,11 @@ def main_gnn() -> None:
 
     result_dict = {
         "args": args.__dict__,
-        "best_val_metrics": best_val_metrics,
-        "best_test_metrics": best_test_metrics,
-        "best_val_metric": best_val_metrics.mean(),
-        "best_test_metric": best_test_metrics.mean(),
-        "best_cfg": best_cfg,
-        "search_time": search_time,
         "best_val_metrics": best_val_metrics_array,
         "best_test_metrics": best_test_metrics_array,
         "best_val_metric": best_val_metrics_array.mean(),
         "best_test_metric": best_test_metrics_array.mean(),
-        "best_train_cfg": best_train_cfg,
-        "best_model_cfg": best_model_cfg,
+        "best_cfg": best_cfg,
         "search_time": search_time,
         "final_model_time": final_model_time,
     }
