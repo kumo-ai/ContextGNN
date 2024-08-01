@@ -26,7 +26,7 @@ from torch_geometric.typing import NodeType
 from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from tqdm import tqdm
 
-from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN
+from hybridgnn.nn.models import IDGNN, HybridGNN
 from hybridgnn.utils import GloveTextEmbedding
 
 parser = argparse.ArgumentParser()
@@ -35,8 +35,8 @@ parser.add_argument("--task", type=str, default="site-sponsor-run")
 parser.add_argument(
     "--model",
     type=str,
-    default="shallowrhsgnn",
-    choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
+    default="hybridgnn",
+    choices=["hybridgnn", "idgnn"],
 )
 parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--epochs", type=int, default=20)
@@ -134,17 +134,6 @@ elif args.model == "hybridgnn":
         norm="layer_norm",
         embedding_dim=64,
     ).to(device)
-elif args.model == 'shallowrhsgnn':
-    model = ShallowRHSGNN(
-        data=data,
-        col_stats_dict=col_stats_dict,
-        num_nodes=num_dst_nodes_dict["train"],
-        num_layers=args.num_layers,
-        channels=args.channels,
-        aggr="sum",
-        norm="layer_norm",
-        embedding_dim=64,
-    ).to(device)
 else:
     raise ValueError(f"Unsupported model type {args.model}.")
 
@@ -182,7 +171,7 @@ def train() -> float:
 
             loss = F.binary_cross_entropy_with_logits(out, target)
             numel = out.numel()
-        elif args.model in ['hybridgnn', 'shallowrhsgnn']:
+        else:
             logits = model(batch, task.src_entity_table, task.dst_entity_table)
             edge_label_index = torch.stack([src_batch, dst_index], dim=0)
             loss = sparse_cross_entropy(logits, edge_label_index)
@@ -223,7 +212,7 @@ def test(loader: NeighborLoader, desc: str) -> np.ndarray:
                                  device=out.device)
             scores[batch[task.dst_entity_table].batch,
                    batch[task.dst_entity_table].n_id] = torch.sigmoid(out)
-        elif args.model in ['hybridgnn', 'shallowrhsgnn']:
+        elif args.model == "hybridgnn":
             out = model(batch, task.src_entity_table,
                         task.dst_entity_table).detach()
             scores = torch.sigmoid(out)
