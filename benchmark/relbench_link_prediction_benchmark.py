@@ -53,7 +53,7 @@ parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--num_trials", type=int, default=10,
                     help="Number of Optuna-based hyper-parameter tuning.")
 parser.add_argument(
-    "--num_repeats", type=int, default=1,
+    "--num_repeats", type=int, default=5,
     help="Number of repeated training and eval on the best config.")
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--num_layers", type=int, default=2)
@@ -71,7 +71,6 @@ args = parser.parse_args()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if torch.cuda.is_available():
     torch.set_num_threads(1)
-
 seed_everything(args.seed)
 
 if args.dataset == "rel-trial":
@@ -174,7 +173,6 @@ def train(
         loss.backward()
 
         optimizer.step()
-        optimizer.zero_grad()
 
         loss_accum += float(loss) * numel
         count_accum += numel
@@ -220,15 +218,15 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
         pred_list.append(pred_mini)
 
     pred = torch.cat(pred_list, dim=0).cpu().numpy()
-    # res = task.evaluate(pred, task.get_table(stage))
-    # return res[LINK_PREDICTION_METRIC]
+    res = task.evaluate(pred, task.get_table(stage))
+    return res[LINK_PREDICTION_METRIC]
 
 
 def train_and_eval_with_cfg(
     cfg: Dict[str, Any],
     trial: Optional[optuna.trial.Trial] = None,
+    enable_test: bool = False,
 ) -> Tuple[float, float]:
-    cfg = {'channels': 64, 'embedding_dim': 32, 'norm': 'layer_norm', 'batch_size': 64, 'base_lr': 0.01, 'gamma_rate': 1.0}
     loader_dict: Dict[str, NeighborLoader] = {}
     dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
     num_dst_nodes_dict: Dict[str, int] = {}
@@ -294,7 +292,9 @@ def train_and_eval_with_cfg(
 
         if val_metric > best_val_metric:
             best_val_metric = val_metric
-            best_test_metric = test(model, loader_dict["test"], "test")
+
+            if enable_test:
+                best_test_metric = test(model, loader_dict["test"], "test")
 
         lr_scheduler.step()
         print(f"Train Loss: {train_loss:.4f}, Val: {val_metric:.4f}")
@@ -311,7 +311,7 @@ def train_and_eval_with_cfg(
 
 def objective(trial: optuna.trial.Trial) -> float:
     cfg = {key: trial.suggest_categorical(key, values) for key, values in search_space.items()}
-    print(cfg)
+    print("Starting exp with config:", cfg)
     run_name = f"exp_{'_'.join([str(k) + '_' + str(v) for k, v in cfg.items()])}"
     writer = SummaryWriter(f'runs/{run_name}')
     writer.add_hparams(cfg, {})
@@ -327,7 +327,7 @@ def objective(trial: optuna.trial.Trial) -> float:
     return best_val_metric
 
 
-def main() -> None:
+def main_gnn() -> None:
     # Hyper-parameter optimization with Optuna
     print("Hyper-parameter search via Optuna")
     start_time = time.time()
@@ -348,7 +348,7 @@ def main() -> None:
     best_val_metrics = []
     best_test_metrics = []
     for _ in range(args.num_repeats):
-        best_val_metric, best_test_metric = train_and_eval_with_cfg(best_cfg)
+        best_val_metric, best_test_metric = train_and_eval_with_cfg(best_cfg, enable_test=True)
         best_val_metrics.append(best_val_metric)
         best_test_metrics.append(best_test_metric)
     end_time = time.time()
@@ -365,6 +365,7 @@ def main() -> None:
         "best_cfg": best_cfg,
         "search_time": search_time,
         "final_model_time": final_model_time,
+        "total_time": search_time + final_model_time,
     }
     print(result_dict)
     if args.result_path != "":
@@ -376,7 +377,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    print(args)
+    main_gnn()
 
 # === hybridgnn ===
 # {'channels': 64, 'embedding_dim': 32, 'norm': 'batch_norm', 'batch_size': 128, 'base_lr': 0.001, 'gamma_rate': 0.9}
