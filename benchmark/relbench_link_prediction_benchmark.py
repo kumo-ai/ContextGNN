@@ -35,6 +35,9 @@ from hybridgnn.utils import GloveTextEmbedding
 from torch.utils.tensorboard import SummaryWriter
 
 
+warnings.filterwarnings("ignore", category=FutureWarning, module="torch")
+warnings.filterwarnings("ignore", category=FutureWarning, module="sentence_transformers")
+
 LINK_PREDICTION_METRIC = "link_prediction_map"
 
 parser = argparse.ArgumentParser()
@@ -99,36 +102,34 @@ data, col_stats_dict = make_pkey_fkey_graph(
         text_embedder=GloveTextEmbedding(device=device), batch_size=512),
     cache_dir=f"{args.cache_dir}/{args.dataset}/materialized",
 )
-
 num_neighbors = [
     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
 ]
-
 model_cls: Type[Union[IDGNN, HybridGNN]]
-
 if args.model == "idgnn":
     search_space = {
-        "channels": [64, 128, 256],
+        "channels": [32, 64, 128, 256],
         "norm": ["layer_norm", "batch_norm"],
-        "batch_size": [256, 512, 1024],
+        "batch_size": [64, 128, 256, 512, 1024],
         "base_lr": [0.0001, 0.01],
         "gamma_rate": [0.9, 0.95, 1.],
     }
     model_cls = IDGNN
 elif args.model == "hybridgnn":
     search_space = {
-        # "channels": [64, 128, 256],
-        "channels": [32, 64, 128],  # 128 in kumo hm.py
-        # "embedding_dim": [64, 128, 256],
-        "embedding_dim": [32],  # 32 in kumo hm.py
+        "channels": [32, 64, 128],
+        "embedding_dim": [32, 64],
         "norm": ["layer_norm", "batch_norm"],
-        # "batch_size": [256, 512, 1024],
-        "batch_size": [64, 128],  # 256],
+        "batch_size": [64, 128],
         "base_lr": [0.001, 0.01],
         "gamma_rate": [0.9, 0.95, 1.],
     }
     model_cls = HybridGNN
 
+import itertools
+
+args.num_trials = len(list(itertools.product(*[v for v in search_space.values()])))
+print(f"num_trials: {args.num_trials}")
 
 def train(
     model: torch.nn.Module,
@@ -173,6 +174,7 @@ def train(
         loss.backward()
 
         optimizer.step()
+        optimizer.zero_grad()
 
         loss_accum += float(loss) * numel
         count_accum += numel
@@ -218,14 +220,15 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
         pred_list.append(pred_mini)
 
     pred = torch.cat(pred_list, dim=0).cpu().numpy()
-    res = task.evaluate(pred, task.get_table(stage))
-    return res[LINK_PREDICTION_METRIC]
+    # res = task.evaluate(pred, task.get_table(stage))
+    # return res[LINK_PREDICTION_METRIC]
 
 
 def train_and_eval_with_cfg(
     cfg: Dict[str, Any],
     trial: Optional[optuna.trial.Trial] = None,
 ) -> Tuple[float, float]:
+    cfg = {'channels': 64, 'embedding_dim': 32, 'norm': 'layer_norm', 'batch_size': 64, 'base_lr': 0.01, 'gamma_rate': 1.0}
     loader_dict: Dict[str, NeighborLoader] = {}
     dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
     num_dst_nodes_dict: Dict[str, int] = {}
@@ -277,18 +280,23 @@ def train_and_eval_with_cfg(
     best_test_metric: float = 0.0
 
     for epoch in range(1, args.epochs + 1):
-        train_loss = train(
-            model,
-            optimizer,
-            loader_dict["train"],
-            SparseTensor(dst_nodes_dict["train"][1], device=device),
-        )
-        optimizer.zero_grad()
-        val_metric = test(model, loader_dict["val"], "val")
+        try:
+            train_loss = train(
+                model,
+                optimizer,
+                loader_dict["train"],
+                SparseTensor(dst_nodes_dict["train"][1], device=device),
+            )
+            # val_metric = best_val_metric + 0.001
+            val_metric = test(model, loader_dict["val"], "val")
+        except torch.OutOfMemoryError as e:
+            print(f"OOM: {e}")
+            raise optuna.TrialPruned()
 
         if val_metric > best_val_metric:
             best_val_metric = val_metric
-            best_test_metric = test(model, loader_dict["test"], "test")
+            # best_test_metric = test(model, loader_dict["test"], "test")
+            best_test_metric = best_val_metric
 
         lr_scheduler.step()
         print(f"Train Loss: {train_loss:.4f}, Val: {val_metric:.4f}")
@@ -321,20 +329,19 @@ def objective(trial: optuna.trial.Trial) -> float:
     return best_val_metric
 
 
-def main_gnn() -> None:
+def main() -> None:
     # Hyper-parameter optimization with Optuna
     print("Hyper-parameter search via Optuna")
-    # start_time = time.time()
-    # study = optuna.create_study(
-    #     pruner=optuna.pruners.MedianPruner(),
-    #     sampler=optuna.samplers.GridSampler(search_space=search_space),
-    #     direction="maximize",
-    # )
-    # study.optimize(objective, n_trials=args.num_trials)
-    # end_time = time.time()
-    # best_cfg = study.best_params
+    start_time = time.time()
+    study = optuna.create_study(
+        pruner=optuna.pruners.MedianPruner(),
+        sampler=optuna.samplers.GridSampler(search_space=search_space),
+        direction="maximize",
+    )
+    study.optimize(objective, n_trials=args.num_trials)
+    best_cfg = study.best_params
     best_cfg =  {'channels': 128, 'embedding_dim': 32, 'norm': 'layer_norm', 'batch_size': 64, 'base_lr': 0.01, 'gamma_rate': 0.95}
-    search_time = end_time - start_time
+    search_time = time.time() - start_time
     print("Hyper-parameter search done. Found the best config.")
 
     print(f"Repeat experiments {args.num_repeats} times with the best config "
@@ -371,8 +378,7 @@ def main_gnn() -> None:
 
 
 if __name__ == "__main__":
-    print(args)
-    main_gnn()
+    main()
 
 # === hybridgnn ===
 # {'channels': 64, 'embedding_dim': 32, 'norm': 'batch_norm', 'batch_size': 128, 'base_lr': 0.001, 'gamma_rate': 0.9}
