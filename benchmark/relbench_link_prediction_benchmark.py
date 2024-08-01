@@ -268,6 +268,7 @@ def train_and_eval_with_cfg(
                                            device=device)
         train_loss = train(model, optimizer, loader_dict["train"],
                            train_sparse_tensor)
+        optimizer.zero_grad()
         val_metric = test(model, loader_dict["val"], "val")
 
         if val_metric > best_val_metric:
