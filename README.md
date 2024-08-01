@@ -9,27 +9,26 @@
 
 ## How to Run
 
-run [`benchmark/relbench_link_prediction_benchmark.py`](https://github.com/kumo-ai/hybridgnn/blob/master/benchmark/relbench_link_prediction_benchmark.py)
+Run [`benchmark/relbench_link_prediction_benchmark.py`](https://github.com/kumo-ai/hybridgnn/blob/master/benchmark/relbench_link_prediction_benchmark.py)
 
-```
+```sh
 python relbench_link_prediction_benchmark.py --dataset rel-trial --task site-sponsor-run --model hybridgnn
-
 ```
 
 
-run [`examples/relbench_example.py`](https://github.com/kumo-ai/hybridgnn/blob/master/examples/relbench_example.py)
+Run [`examples/relbench_example.py`](https://github.com/kumo-ai/hybridgnn/blob/master/examples/relbench_example.py)
 
-```
+```sh
 python relbench_example.py --dataset rel-trial --task site-sponsor-run --model hybridgnn
-
 python relbench_example.py --dataset rel-trial --task condition-sponsor-run --model hybridgnn
 ```
 
 
 ## Install Instruction
 
-```
-pip install e .
-pip install relbench[example]
-pip install optuna
+```sh
+pip install -e .
+
+# to run examples and benchmarks
+pip install -e '.[full]'
 ```
