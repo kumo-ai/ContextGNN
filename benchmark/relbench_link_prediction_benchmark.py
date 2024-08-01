@@ -5,7 +5,7 @@ import os.path as osp
 import time
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import numpy as np
 import optuna
@@ -54,7 +54,8 @@ parser.add_argument(
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--num_layers", type=int, default=2)
 parser.add_argument("--num_neighbors", type=int, default=128)
-parser.add_argument("--temporal_strategy", type=str, default="last", choices=["last", "uniform"])
+parser.add_argument("--temporal_strategy", type=str, default="last",
+                    choices=["last", "uniform"])
 parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
 parser.add_argument("--num_workers", type=int, default=0)
 parser.add_argument("--seed", type=int, default=42)
@@ -101,7 +102,7 @@ num_neighbors = [
     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
 ]
 
-model_cls: Union[IDGNN, HybridGNN]
+model_cls: Type[Union[IDGNN, HybridGNN]]
 
 if args.model == "idgnn":
     model_search_space = {
@@ -110,7 +111,7 @@ if args.model == "idgnn":
     }
     train_search_space = {
         "batch_size": [256, 512, 1024],
-        "base_lr": [0.001, 0.01],
+        "base_lr": [0.0001, 0.01],
         "gamma_rate": [0.9, 0.95, 1.],
     }
     model_cls = IDGNN
@@ -259,12 +260,12 @@ def train_and_eval_with_cfg(
     optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg["base_lr"])
     lr_scheduler = ExponentialLR(optimizer, gamma=train_cfg["gamma_rate"])
 
-    best_val_metric = 0
-    best_test_metric = 0
+    best_val_metric: float = 0.0
+    best_test_metric: float = 0.0
 
     for epoch in range(1, args.epochs + 1):
         train_sparse_tensor = SparseTensor(dst_nodes_dict["train"][1],
-                                        device=device)
+                                           device=device)
         train_loss = train(model, optimizer, loader_dict["train"],
                            train_sparse_tensor)
         val_metric = test(model, loader_dict["val"], "val")
@@ -287,12 +288,18 @@ def train_and_eval_with_cfg(
 
 
 def objective(trial: optuna.trial.Trial) -> float:
-    model_cfg = {}
+    model_cfg: Dict[str, Any] = {}
     for name, search_list in model_search_space.items():
+        assert isinstance(search_list, list)
         model_cfg[name] = trial.suggest_categorical(name, search_list)
-    train_cfg = {}
+    train_cfg: Dict[str, Any] = {}
     for name, search_list in train_search_space.items():
-        train_cfg[name] = trial.suggest_categorical(name, search_list)
+        assert isinstance(search_list, list)
+        if name != "base_lr":
+            train_cfg[name] = trial.suggest_categorical(name, search_list)
+        else:
+            train_cfg[name] = trial.suggest_loguniform(name, search_list[0],
+                                                       search_list[1])
 
     best_val_metric, _ = train_and_eval_with_cfg(model_cfg=model_cfg,
                                                  train_cfg=train_cfg,
@@ -330,15 +337,15 @@ def main_gnn() -> None:
         best_test_metrics.append(best_test_metric)
     end_time = time.time()
     final_model_time = (end_time - start_time) / args.num_repeats
-    best_val_metrics = np.array(best_val_metrics)
-    best_test_metrics = np.array(best_test_metrics)
+    best_val_metrics_array = np.array(best_val_metrics)
+    best_test_metrics_array = np.array(best_test_metrics)
 
     result_dict = {
         "args": args.__dict__,
-        "best_val_metrics": best_val_metrics,
-        "best_test_metrics": best_test_metrics,
-        "best_val_metric": best_val_metrics.mean(),
-        "best_test_metric": best_test_metrics.mean(),
+        "best_val_metrics": best_val_metrics_array,
+        "best_test_metrics": best_test_metrics_array,
+        "best_val_metric": best_val_metrics_array.mean(),
+        "best_test_metric": best_test_metrics_array.mean(),
         "best_train_cfg": best_train_cfg,
         "best_model_cfg": best_model_cfg,
         "search_time": search_time,
@@ -349,9 +356,10 @@ def main_gnn() -> None:
     # Save results
     if args.result_path != "":
         os.makedirs(args.result_path, exist_ok=True)
-        torch.save(result_dict,
-                   osp.join(args.result_path,
-                            f"{args.dataset}_{args.task}_{args.model}"))
+        torch.save(
+            result_dict,
+            osp.join(args.result_path,
+                     f"{args.dataset}_{args.task}_{args.model}"))
 
 
 if __name__ == "__main__":
