@@ -17,14 +17,18 @@ from hybridgnn.nn.models import HeteroGraphSAGE
 
 class ShallowRHSGNN(torch.nn.Module):
     r"""Implementation of ShallowRHSGNN model."""
-    def __init__(self, data: HeteroData,
-                 col_stats_dict: Dict[str, Dict[str,
-                                                Dict[StatType,
-                                                     Any]]], num_nodes: int,
-                 num_layers: int, channels: int, embedding_dim: int,
-                 aggr: str = 'sum', norm: str = 'layer_norm') -> None:
+    def __init__(
+        self,
+        data: HeteroData,
+        col_stats_dict: Dict[str, Dict[str, Dict[StatType, Any]]],
+        num_nodes: int,
+        num_layers: int,
+        channels: int,
+        embedding_dim: int,
+        aggr: str = 'sum',
+        norm: str = 'layer_norm',
+    ) -> None:
         super().__init__()
-
         self.encoder = HeteroEncoder(
             channels=channels,
             node_to_col_names_dict={
@@ -55,10 +59,8 @@ class ShallowRHSGNN(torch.nn.Module):
             num_layers=1,
         )
         self.lhs_projector = torch.nn.Linear(channels, embedding_dim)
-
         self.id_awareness_emb = torch.nn.Embedding(1, channels)
         self.rhs_embedding = torch.nn.Embedding(num_nodes, embedding_dim)
-
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
