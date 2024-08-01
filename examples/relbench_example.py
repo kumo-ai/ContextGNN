@@ -1,10 +1,9 @@
 import argparse
-import copy
 import json
 import os
 import warnings
 from pathlib import Path
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
@@ -112,8 +111,6 @@ for split in ["train", "val", "test"]:
         persistent_workers=args.num_workers > 0,
     )
 
-model: Union[IDGNN, HybridGNN]
-
 if args.model == "idgnn":
     model = IDGNN(
         data=data,
@@ -137,6 +134,8 @@ elif args.model == "hybridgnn":
     ).to(device)
 else:
     raise ValueError(f"Unsupported model type {args.model}.")
+
+assert isinstance(args.model, torch.nn.Module)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
