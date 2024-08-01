@@ -287,7 +287,6 @@ def train_and_eval_with_cfg(
                 loader_dict["train"],
                 SparseTensor(dst_nodes_dict["train"][1], device=device),
             )
-            # val_metric = best_val_metric + 0.001
             val_metric = test(model, loader_dict["val"], "val")
         except torch.OutOfMemoryError as e:
             print(f"OOM: {e}")
@@ -295,8 +294,7 @@ def train_and_eval_with_cfg(
 
         if val_metric > best_val_metric:
             best_val_metric = val_metric
-            # best_test_metric = test(model, loader_dict["test"], "test")
-            best_test_metric = best_val_metric
+            best_test_metric = test(model, loader_dict["test"], "test")
 
         lr_scheduler.step()
         print(f"Train Loss: {train_loss:.4f}, Val: {val_metric:.4f}")
