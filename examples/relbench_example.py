@@ -35,7 +35,7 @@ parser.add_argument("--task", type=str, default="site-sponsor-run")
 parser.add_argument(
     "--model",
     type=str,
-    default="shallowrhsgnn",
+    default="hybridgnn",
     choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--lr", type=float, default=0.001)
