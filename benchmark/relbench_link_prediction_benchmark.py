@@ -288,11 +288,11 @@ def train_and_eval_with_cfg(
 
 
 def objective(trial: optuna.trial.Trial) -> float:
-    model_cfg = {}
+    model_cfg: Dict[str, list] = {}
     for name, search_list in model_search_space.items():
         assert isinstance(search_list, list)
         model_cfg[name] = trial.suggest_categorical(name, search_list)
-    train_cfg = {}
+    train_cfg: Dict[str, list] = {}
     for name, search_list in train_search_space.items():
         assert isinstance(search_list, list)
         if name != "base_lr":
