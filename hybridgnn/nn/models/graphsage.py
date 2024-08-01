@@ -7,6 +7,7 @@ from torch_geometric.typing import EdgeType, NodeType
 
 
 class HeteroGraphSAGE(torch.nn.Module):
+    r"""Implementation of GraphSAGE convolutoin."""
     def __init__(
         self,
         node_types: List[NodeType],
