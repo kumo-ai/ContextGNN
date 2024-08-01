@@ -111,7 +111,7 @@ for split in ["train", "val", "test"]:
         persistent_workers=args.num_workers > 0,
     )
 
-model: Union[IDGNN, HybridGNN]
+model: Union[IDGNN, HybridGNN, ShallowRHSGNN]
 
 if args.model == "idgnn":
     model = IDGNN(
