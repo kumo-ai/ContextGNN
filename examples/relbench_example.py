@@ -26,7 +26,7 @@ from torch_geometric.typing import NodeType
 from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from tqdm import tqdm
 
-from hybridgnn.nn.models import IDGNN, HybridGNN
+from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN
 from hybridgnn.utils import GloveTextEmbedding
 
 parser = argparse.ArgumentParser()
@@ -36,7 +36,7 @@ parser.add_argument(
     "--model",
     type=str,
     default="hybridgnn",
-    choices=["hybridgnn", "idgnn"],
+    choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--epochs", type=int, default=20)
@@ -111,7 +111,7 @@ for split in ["train", "val", "test"]:
         persistent_workers=args.num_workers > 0,
     )
 
-model: Union[IDGNN, HybridGNN]
+model: Union[IDGNN, HybridGNN, ShallowRHSGNN]
 
 if args.model == "idgnn":
     model = IDGNN(
@@ -125,6 +125,17 @@ if args.model == "idgnn":
     ).to(device)
 elif args.model == "hybridgnn":
     model = HybridGNN(
+        data=data,
+        col_stats_dict=col_stats_dict,
+        num_nodes=num_dst_nodes_dict["train"],
+        num_layers=args.num_layers,
+        channels=args.channels,
+        aggr="sum",
+        norm="layer_norm",
+        embedding_dim=64,
+    ).to(device)
+elif args.model == 'shallowrhsgnn':
+    model = ShallowRHSGNN(
         data=data,
         col_stats_dict=col_stats_dict,
         num_nodes=num_dst_nodes_dict["train"],
@@ -171,7 +182,7 @@ def train() -> float:
 
             loss = F.binary_cross_entropy_with_logits(out, target)
             numel = out.numel()
-        else:
+        elif args.model in ['hybridgnn', 'shallowrhsgnn']:
             logits = model(batch, task.src_entity_table, task.dst_entity_table)
             edge_label_index = torch.stack([src_batch, dst_index], dim=0)
             loss = sparse_cross_entropy(logits, edge_label_index)
@@ -212,7 +223,7 @@ def test(loader: NeighborLoader, desc: str) -> np.ndarray:
                                  device=out.device)
             scores[batch[task.dst_entity_table].batch,
                    batch[task.dst_entity_table].n_id] = torch.sigmoid(out)
-        elif args.model == "hybridgnn":
+        elif args.model in ['hybridgnn', 'shallowrhsgnn']:
             out = model(batch, task.src_entity_table,
                         task.dst_entity_table).detach()
             scores = torch.sigmoid(out)

@@ -15,20 +15,20 @@ from hybridgnn.nn.encoder import (
 from hybridgnn.nn.models import HeteroGraphSAGE
 
 
-class IDGNN(torch.nn.Module):
-    r"""Implementation of IDGNN model."""
+class ShallowRHSGNN(torch.nn.Module):
+    r"""Implementation of ShallowRHSGNN model."""
     def __init__(
         self,
         data: HeteroData,
         col_stats_dict: Dict[str, Dict[str, Dict[StatType, Any]]],
+        num_nodes: int,
         num_layers: int,
         channels: int,
-        out_channels: int,
+        embedding_dim: int,
         aggr: str = 'sum',
         norm: str = 'layer_norm',
     ) -> None:
         super().__init__()
-
         self.encoder = HeteroEncoder(
             channels=channels,
             node_to_col_names_dict={
@@ -54,12 +54,13 @@ class IDGNN(torch.nn.Module):
         )
         self.head = MLP(
             channels,
-            out_channels=out_channels,
+            out_channels=1,
             norm=norm,
             num_layers=1,
         )
-
+        self.lhs_projector = torch.nn.Linear(channels, embedding_dim)
         self.id_awareness_emb = torch.nn.Embedding(1, channels)
+        self.rhs_embedding = torch.nn.Embedding(num_nodes, embedding_dim)
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
@@ -68,6 +69,8 @@ class IDGNN(torch.nn.Module):
         self.gnn.reset_parameters()
         self.head.reset_parameters()
         self.id_awareness_emb.reset_parameters()
+        self.rhs_embedding.reset_parameters()
+        self.lhs_projector.reset_parameters()
 
     def forward(
         self,
@@ -77,6 +80,7 @@ class IDGNN(torch.nn.Module):
     ) -> Tensor:
         seed_time = batch[entity_table].seed_time
         x_dict = self.encoder(batch.tf_dict)
+
         # Add ID-awareness to the root node
         x_dict[entity_table][:seed_time.size(0
                                              )] += self.id_awareness_emb.weight
@@ -91,4 +95,7 @@ class IDGNN(torch.nn.Module):
             batch.edge_index_dict,
         )
 
-        return self.head(x_dict[dst_table])
+        batch_size = seed_time.size(0)
+        lhs_emb = self.lhs_projector(x_dict[entity_table][:batch_size])
+        rhs_emb = self.rhs_embedding
+        return lhs_emb @ rhs_emb.weight.t()
