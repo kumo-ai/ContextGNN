@@ -45,11 +45,11 @@ parser.add_argument(
     default="hybridgnn",
     choices=["hybridgnn", "idgnn", "shallowrhs"],
 )
-parser.add_argument("--epochs", type=int, default=1)
-parser.add_argument("--num_trials", type=int, default=2,
+parser.add_argument("--epochs", type=int, default=20)
+parser.add_argument("--num_trials", type=int, default=10,
                     help="Number of Optuna-based hyper-parameter tuning.")
 parser.add_argument(
-    "--num_repeats", type=int, default=2,
+    "--num_repeats", type=int, default=5,
     help="Number of repeated training and eval on the best config.")
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--num_layers", type=int, default=2)
