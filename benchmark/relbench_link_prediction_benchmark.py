@@ -42,8 +42,8 @@ parser.add_argument("--task", type=str, default="user-post-comment")
 parser.add_argument(
     "--model",
     type=str,
-    default="hybridgnn",
-    choices=["hybridgnn", "idgnn", "shallowrhs"],
+    default="shallowrhsgnn",
+    choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--num_trials", type=int, default=10,
