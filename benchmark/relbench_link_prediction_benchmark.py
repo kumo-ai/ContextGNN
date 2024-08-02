@@ -30,26 +30,26 @@ from torch_geometric.typing import NodeType
 from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from tqdm import tqdm
 
-from hybridgnn.nn.models import IDGNN, HybridGNN
+from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN
 from hybridgnn.utils import GloveTextEmbedding
 
 TRAIN_CONFIG_KEYS = ["batch_size", "gamma_rate", "base_lr"]
 LINK_PREDICTION_METRIC = "link_prediction_map"
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="rel-trial")
-parser.add_argument("--task", type=str, default="condition-sponsor-run")
+parser.add_argument("--dataset", type=str, default="rel-stack")
+parser.add_argument("--task", type=str, default="user-post-comment")
 parser.add_argument(
     "--model",
     type=str,
     default="hybridgnn",
-    choices=["hybridgnn", "idgnn"],
+    choices=["hybridgnn", "idgnn", "shallowrhs"],
 )
-parser.add_argument("--epochs", type=int, default=20)
-parser.add_argument("--num_trials", type=int, default=10,
+parser.add_argument("--epochs", type=int, default=1)
+parser.add_argument("--num_trials", type=int, default=2,
                     help="Number of Optuna-based hyper-parameter tuning.")
 parser.add_argument(
-    "--num_repeats", type=int, default=5,
+    "--num_repeats", type=int, default=2,
     help="Number of repeated training and eval on the best config.")
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--num_layers", type=int, default=2)
@@ -102,7 +102,7 @@ num_neighbors = [
     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
 ]
 
-model_cls: Type[Union[IDGNN, HybridGNN]]
+model_cls: Type[Union[IDGNN, HybridGNN, ShallowRHSGNN]]
 
 if args.model == "idgnn":
     model_search_space = {
@@ -115,7 +115,7 @@ if args.model == "idgnn":
         "gamma_rate": [0.9, 0.95, 1.],
     }
     model_cls = IDGNN
-elif args.model == "hybridgnn":
+elif args.model in ["hybridgnn", "shallowrhsgnn"]:
     model_search_space = {
         "channels": [64, 128, 256],
         "embedding_dim": [64, 128, 256],
@@ -126,7 +126,7 @@ elif args.model == "hybridgnn":
         "base_lr": [0.001, 0.01],
         "gamma_rate": [0.9, 0.95, 1.],
     }
-    model_cls = HybridGNN
+    model_cls = (HybridGNN if args.model == "hybridgnn" else ShallowRHSGNN)
 
 
 def train(
@@ -164,7 +164,7 @@ def train(
 
             loss = F.binary_cross_entropy_with_logits(out, target)
             numel = out.numel()
-        else:
+        elif args.model in ["hybridgnn", "shallowrhsgnn"]:
             logits = model(batch, task.src_entity_table, task.dst_entity_table)
             edge_label_index = torch.stack([src_batch, dst_index], dim=0)
             loss = sparse_cross_entropy(logits, edge_label_index)
@@ -205,7 +205,7 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
                                  device=out.device)
             scores[batch[task.dst_entity_table].batch,
                    batch[task.dst_entity_table].n_id] = torch.sigmoid(out)
-        elif args.model == "hybridgnn":
+        elif args.model in ["hybridgnn", "shallowrhsgnn"]:
             # Get ground-truth
             out = model(batch, task.src_entity_table,
                         task.dst_entity_table).detach()
@@ -248,7 +248,7 @@ def train_and_eval_with_cfg(
             persistent_workers=args.num_workers > 0,
         )
 
-    if args.model == "hybridgnn":
+    if args.model in ["hybridgnn", "shallowrhsgnn"]:
         model_cfg["num_nodes"] = num_dst_nodes_dict["train"]
     elif args.model == "idgnn":
         model_cfg["out_channels"] = 1
