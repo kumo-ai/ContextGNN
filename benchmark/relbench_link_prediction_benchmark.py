@@ -42,7 +42,7 @@ parser.add_argument("--task", type=str, default="user-post-comment")
 parser.add_argument(
     "--model",
     type=str,
-    default="shallowrhsgnn",
+    default="hybridgnn",
     choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--epochs", type=int, default=20)
