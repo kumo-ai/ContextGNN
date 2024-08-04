@@ -117,12 +117,15 @@ if args.model == "idgnn":
     model_cls = IDGNN
 elif args.model == "hybridgnn":
     model_search_space = {
-        "channels": [64, 128, 256],
-        "embedding_dim": [64, 128, 256],
+        # "channels": [64, 128, 256],
+        "channels": [64],
+        # "embedding_dim": [64, 128, 256],
+        "embedding_dim": [64],
         "norm": ["layer_norm", "batch_norm"]
     }
     train_search_space = {
-        "batch_size": [256, 512, 1024],
+        # "batch_size": [256, 512, 1024],
+        "batch_size": [64],
         "base_lr": [0.001, 0.01],
         "gamma_rate": [0.9, 0.95, 1.],
     }
@@ -226,6 +229,7 @@ def train_and_eval_with_cfg(
     train_cfg: Dict[str, Any],
     trial: Optional[optuna.trial.Trial] = None,
 ) -> Tuple[float, float]:
+    print(f"Training with model config {model_cfg} and train config {train_cfg}")
     loader_dict: Dict[str, NeighborLoader] = {}
     dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
     num_dst_nodes_dict: Dict[str, int] = {}
@@ -264,12 +268,18 @@ def train_and_eval_with_cfg(
     best_test_metric: float = 0.0
 
     for epoch in range(1, args.epochs + 1):
-        train_sparse_tensor = SparseTensor(dst_nodes_dict["train"][1],
-                                           device=device)
-        train_loss = train(model, optimizer, loader_dict["train"],
-                           train_sparse_tensor)
-        optimizer.zero_grad()
-        val_metric = test(model, loader_dict["val"], "val")
+        try:
+            train_loss = train(
+                model,
+                optimizer,
+                loader_dict["train"],
+                SparseTensor(dst_nodes_dict["train"][1], device=device),
+            )
+            optimizer.zero_grad()
+            val_metric = test(model, loader_dict["val"], "val")
+        except torch.OutOfMemoryError as e:
+            print(f"OOM error: {e}")
+            raise optuna.TrialPruned() from e
 
         if val_metric > best_val_metric:
             best_val_metric = val_metric
@@ -310,22 +320,27 @@ def objective(trial: optuna.trial.Trial) -> float:
 
 def main_gnn() -> None:
     # Hyper-parameter optimization with Optuna
-    print("Hyper-parameter search via Optuna")
+    # print("Hyper-parameter search via Optuna")
     start_time = time.time()
-    study = optuna.create_study(
-        pruner=optuna.pruners.MedianPruner(),
-        direction="maximize",
-    )
-    study.optimize(objective, n_trials=args.num_trials)
+    # study = optuna.create_study(
+    #     pruner=optuna.pruners.MedianPruner(),
+    #     direction="maximize",
+    # )
+    # study.optimize(objective, n_trials=args.num_trials)
     end_time = time.time()
     search_time = end_time - start_time
-    print("Hyper-parameter search done. Found the best config.")
-    params = study.best_params
-    best_train_cfg = {}
-    for train_cfg_key in TRAIN_CONFIG_KEYS:
-        best_train_cfg[train_cfg_key] = params.pop(train_cfg_key)
-    best_model_cfg = params
+    # print("Hyper-parameter search done. Found the best config.")
+    # params = study.best_params
+    # best_train_cfg = {}
+    # for train_cfg_key in TRAIN_CONFIG_KEYS:
+    #     best_train_cfg[train_cfg_key] = params.pop(train_cfg_key)
+    # best_model_cfg = params
 
+    best_train_cfg = {'batch_size': 64, 'gamma_rate': 0.95, 'base_lr': 0.002913427108331806}
+    best_model_cfg = {'channels': 64, 'embedding_dim': 64, 'norm': 'layer_norm'}
+
+    # Repeat experiments 5 times with the best train config {'batch_size': 64, 'gamma_rate': 0.95, 'base_lr': 0.002913427108331806} and model config {'channels': 64, 'embedding_dim': 64, 'norm': 'layer_norm'}.
+    # Training with model config {'channels': 64, 'embedding_dim': 64, 'norm': 'layer_norm'} and train config {'batch_size': 64, 'gamma_rate': 0.95, 'base_lr': 0.002913427108331806}
     print(f"Repeat experiments {args.num_repeats} times with the best train "
           f"config {best_train_cfg} and model config {best_model_cfg}.")
     start_time = time.time()
@@ -366,3 +381,15 @@ def main_gnn() -> None:
 if __name__ == "__main__":
     print(args)
     main_gnn()
+
+
+# OOM
+# {'channels': 128, 'embedding_dim': 128, 'norm': 'batch_norm', 'batch_size': 256, 'base_lr': 0.003945390255158116, 'gamma_rate': 1.0}
+# {'channels': 128, 'embedding_dim': 128, 'norm': 'layer_norm', 'batch_size': 512, 'base_lr': 0.007789825591164979, 'gamma_rate': 1.0}
+# {'channels': 64, 'embedding_dim': 128, 'norm': 'batch_norm'} {'batch_size': 256, 'base_lr': 0.00922893086172406, 'gamma_rate': 0.95}
+#
+
+# other exps
+# {'args': {'dataset': 'rel-stack', 'task': 'user-post-comment', 'model': 'hybridgnn', 'epochs': 20, 'num_trials': 10, 'num_repeats': 5, 'eval_epochs_interval': 1, 'num_layers': 2, 'num_neighbors': 128, 'temporal_strategy': 'last', 'max_steps_per_epoch': 2000, 'num_workers': 0, 'seed': 42, 'cache_dir': '/home/ubuntu/.cache/relbench_examples', 'result_path': 'result'}, 'best_val_metrics': array([0.15458126, 0.14906858, 0.15158813, 0.15396466, 0.15173225]), 'best_test_metrics': array([0.13743207, 0.13713424, 0.1313349 , 0.13067593, 0.13038609]), 'best_val_metric': 0.15218697736385006, 'best_test_metric': 0.13339264681383203, 'best_train_cfg': {'batch_size': 256, 'gamma_rate': 0.95, 'base_lr': 0.001}, 'best_model_cfg': {'channels': 64, 'embedding_dim': 128, 'norm': 'batch_norm', 'num_nodes': 333893}, 'search_time': 16846.26818227768, 'final_model_time': 1566.1854189872743, 'total_time': 18412.453601264955}
+# {'args': {'dataset': 'rel-stack', 'task': 'post-post-related', 'model': 'hybridgnn', 'epochs': 20, 'num_trials': 10, 'num_repeats': 5, 'eval_epochs_interval': 1, 'num_layers': 2, 'num_neighbors': 128, 'temporal_strategy': 'last', 'max_steps_per_epoch': 2000, 'num_workers': 0, 'seed': 42, 'cache_dir': '/home/xinwei/.cache/relbench_examples', 'result_path': 'result'}, 'best_val_metrics': array([0.08301109, 0.08316846, 0.08593909, 0.07887142, 0.08202517]), 'best_test_metrics': array([0.11116754, 0.10774952, 0.1117951 , 0.11046076, 0.11761959]), 'best_val_metric': np.float64(0.08260304335116278), 'best_test_metric': np.float64(0.1117585049283463), 'best_train_cfg': {'batch_size': 256, 'gamma_rate': 0.9, 'base_lr': 0.001889523224529811}, 'best_model_cfg': {'channels': 64, 'embedding_dim': 64, 'norm': 'batch_norm', 'num_nodes': 333893}, 'search_time': 558.4074969291687, 'final_model_time': 92.670005941391, 'total_time': 651.0775028705597}
+# {'args': {'dataset': 'rel-trial', 'task': 'condition-sponsor-run', 'model': 'hybridgnn', 'epochs': 20, 'num_trials': 10, 'num_repeats': 5, 'eval_epochs_interval': 1, 'num_layers': 4, 'num_neighbors': 128, 'temporal_strategy': 'last', 'max_steps_per_epoch': 2000, 'num_workers': 0, 'seed': 42, 'cache_dir': '/home/ubuntu/.cache/relbench_examples', 'result_path': 'result'}, 'best_val_metrics': array([0.11628953, 0.11500305, 0.1152548 , 0.11786903, 0.1151703 ]), 'best_test_metrics': array([0.11371281, 0.11625578, 0.11576188, 0.11596737, 0.12060534]), 'best_val_metric': 0.11591734304022924, 'best_test_metric': 0.11646063518765326, 'best_train_cfg': {'batch_size': 512, 'gamma_rate': 1.0, 'base_lr': 0.0014899407280138783}, 'best_model_cfg': {'channels': 64, 'embedding_dim': 64, 'norm': 'batch_norm', 'num_nodes': 53241}, 'search_time': 44716.74656367302, 'final_model_time': 4616.19599237442, 'total_time': 49332.94255604744}
