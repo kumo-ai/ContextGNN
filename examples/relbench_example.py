@@ -13,6 +13,7 @@ from typing import Dict, List, Tuple, Union
 
 import numpy as np
 import torch
+import torchrec
 import torch.nn.functional as F
 from relbench.base import Dataset, RecommendationTask, TaskType
 from relbench.datasets import get_dataset
@@ -58,6 +59,7 @@ parser.add_argument("--num_workers", type=int, default=0)
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--cache_dir", type=str,
                     default=os.path.expanduser("~/.cache/relbench_examples"))
+parser.add_argument("--optimizer", type=str, default="exact", choices=["exact", "row-wise"])
 args = parser.parse_args()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -170,7 +172,15 @@ elif args.model == 'shallowrhsgnn':
 else:
     raise ValueError(f"Unsupported model type {args.model}.")
 
-optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+if args.optimizer == "exact":
+    optimizers = [torch.optim.Adam(model.parameters(), lr=args.lr)]
+elif args.optimizer == "row-wise":
+    optimizers = [
+        torch.optim.Adam([p for name, p in model.named_parameters() if 'rhs_embedding' not in name], lr=args.lr),
+        torchrec.optim.RowWiseAdagrad(model.rhs_embedding.parameters(), lr=args.lr),
+    ]
+else:
+    raise ValueError(f"Unsupported optimizer type {args.optimizer}.")
 
 
 def train() -> float:
@@ -188,7 +198,7 @@ def train() -> float:
         src_batch, dst_index = sparse_tensor[input_id]
 
         # Optimization
-        optimizer.zero_grad()
+        [optimizer.zero_grad() for optimizer in optimizers]
 
         if args.model == 'idgnn':
             out = model(batch, task.src_entity_table,
@@ -211,7 +221,7 @@ def train() -> float:
             numel = len(batch[task.dst_entity_table].batch)
         loss.backward()
 
-        optimizer.step()
+        [optimizer.step() for optimizer in optimizers]
 
         loss_accum += float(loss) * numel
         count_accum += numel
