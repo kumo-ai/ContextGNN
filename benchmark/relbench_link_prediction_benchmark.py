@@ -30,7 +30,7 @@ from torch_geometric.typing import NodeType
 from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from tqdm import tqdm
 
-from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN
+from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN, Hybrid_RHSTransformer
 from hybridgnn.utils import GloveTextEmbedding
 
 TRAIN_CONFIG_KEYS = ["batch_size", "gamma_rate", "base_lr"]
@@ -43,7 +43,7 @@ parser.add_argument(
     "--model",
     type=str,
     default="hybridgnn",
-    choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
+    choices=["hybridgnn", "idgnn", "shallowrhsgnn", "rhstransformer"],
 )
 parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--num_trials", type=int, default=10,
@@ -102,7 +102,7 @@ num_neighbors = [
     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
 ]
 
-model_cls: Type[Union[IDGNN, HybridGNN, ShallowRHSGNN]]
+model_cls: Type[Union[IDGNN, HybridGNN, ShallowRHSGNN, Hybrid_RHSTransformer]]
 
 if args.model == "idgnn":
     model_search_space = {
@@ -127,6 +127,18 @@ elif args.model in ["hybridgnn", "shallowrhsgnn"]:
         "gamma_rate": [0.9, 0.95, 1.],
     }
     model_cls = (HybridGNN if args.model == "hybridgnn" else ShallowRHSGNN)
+elif args.model in ["rhstransformer"]:
+    model_search_space = {
+        "channels": [64, 128, 256],
+        "embedding_dim": [64, 128, 256],
+        "norm": ["layer_norm", "batch_norm"]
+    }
+    train_search_space = {
+        "batch_size": [256, 512, 1024],
+        "base_lr": [0.001, 0.01],
+        "gamma_rate": [0.9, 0.95, 1.],
+    }
+    model_cls = Hybrid_RHSTransformer
 
 
 def train(
@@ -164,7 +176,7 @@ def train(
 
             loss = F.binary_cross_entropy_with_logits(out, target)
             numel = out.numel()
-        elif args.model in ["hybridgnn", "shallowrhsgnn"]:
+        elif args.model in ["hybridgnn", "shallowrhsgnn", "rhstransformer"]:
             logits = model(batch, task.src_entity_table, task.dst_entity_table)
             edge_label_index = torch.stack([src_batch, dst_index], dim=0)
             loss = sparse_cross_entropy(logits, edge_label_index)
@@ -248,7 +260,7 @@ def train_and_eval_with_cfg(
             persistent_workers=args.num_workers > 0,
         )
 
-    if args.model in ["hybridgnn", "shallowrhsgnn"]:
+    if args.model in ["hybridgnn", "shallowrhsgnn", "rhstransformer"]:
         model_cfg["num_nodes"] = num_dst_nodes_dict["train"]
     elif args.model == "idgnn":
         model_cfg["out_channels"] = 1
