@@ -17,7 +17,19 @@ from hybridgnn.nn.models.transformer import RHSTransformer
 
 
 class Hybrid_RHSTransformer(torch.nn.Module):
-    r"""Implementation of RHSTransformer model."""
+    r"""Implementation of RHSTransformer model.
+    Args:
+        data (HeteroData): dataset
+        col_stats_dict (Dict[str, Dict[str, Dict[StatType, Any]]]): column stats
+        num_nodes (int): number of nodes,
+        num_layers (int): number of mp layers,
+        channels (int): input dimension,
+        embedding_dim (int): embedding dimension size,
+        aggr (str): aggregation type,
+        norm (norm): normalization type,
+        dropout (float): dropout rate for the transformer float,
+        heads (int): number of attention heads,
+        pe (str): type of positional encoding for the transformer,"""
     def __init__(
         self,
         data: HeteroData,
@@ -28,6 +40,8 @@ class Hybrid_RHSTransformer(torch.nn.Module):
         embedding_dim: int,
         aggr: str = 'sum',
         norm: str = 'layer_norm',
+        dropout: float = 0.2,
+        heads: int = 1,
         pe: str = "abs",
     ) -> None:
         super().__init__()
@@ -62,15 +76,15 @@ class Hybrid_RHSTransformer(torch.nn.Module):
             num_layers=1,
         )
         self.lhs_projector = torch.nn.Linear(channels, embedding_dim)
-
         self.id_awareness_emb = torch.nn.Embedding(1, channels)
         self.rhs_embedding = torch.nn.Embedding(num_nodes, embedding_dim)
         self.lin_offset_idgnn = torch.nn.Linear(embedding_dim, 1)
         self.lin_offset_embgnn = torch.nn.Linear(embedding_dim, 1)
+
         self.rhs_transformer = RHSTransformer(in_channels=channels,
                                               out_channels=channels,
                                               hidden_channels=channels,
-                                              heads=1, dropout=0.2,
+                                              heads=heads, dropout=dropout,
                                               position_encoding=pe)
 
         self.channels = channels
@@ -120,7 +134,7 @@ class Hybrid_RHSTransformer(torch.nn.Module):
         rhs_idgnn_index = batch.n_id_dict[dst_table]  # num_sampled_rhs
         lhs_idgnn_batch = batch.batch_dict[dst_table]  # batch_size
 
-        #! adding transformer here
+        # adding rhs transformer
         rhs_gnn_embedding = self.rhs_transformer(rhs_gnn_embedding,
                                                  lhs_idgnn_batch)
 

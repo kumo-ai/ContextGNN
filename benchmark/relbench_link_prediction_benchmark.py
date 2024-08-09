@@ -129,14 +129,16 @@ elif args.model in ["hybridgnn", "shallowrhsgnn"]:
     model_cls = (HybridGNN if args.model == "hybridgnn" else ShallowRHSGNN)
 elif args.model in ["rhstransformer"]:
     model_search_space = {
-        "channels": [64, 128, 256],
-        "embedding_dim": [64, 128, 256],
-        "norm": ["layer_norm", "batch_norm"]
+        "channels": [64, 128],
+        "embedding_dim": [64, 128],
+        "norm": ["layer_norm"],
+        "dropout": [0.1, 0.2],
+        "pe": ["abs", "none"],
     }
     train_search_space = {
         "batch_size": [256, 512, 1024],
-        "base_lr": [0.001, 0.01],
-        "gamma_rate": [0.9, 0.95, 1.],
+        "base_lr": [0.001, 0.01, 0.0001],
+        "gamma_rate": [0.9, 1.0],
     }
     model_cls = Hybrid_RHSTransformer
 
@@ -217,7 +219,7 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
                                  device=out.device)
             scores[batch[task.dst_entity_table].batch,
                    batch[task.dst_entity_table].n_id] = torch.sigmoid(out)
-        elif args.model in ["hybridgnn", "shallowrhsgnn"]:
+        elif args.model in ["hybridgnn", "shallowrhsgnn", "rhstransformer"]:
             # Get ground-truth
             out = model(batch, task.src_entity_table,
                         task.dst_entity_table).detach()

@@ -18,6 +18,7 @@ class RHSTransformer(torch.nn.Module):
         heads (int): The number of attention heads for the transformer.
         num_transformer_blocks (int): The number of transformer blocks. 
         dropout (float): dropout rate for the transformer 
+        position_encoding (str): type of positional encoding,
     """
     def __init__(
         self,
@@ -40,11 +41,10 @@ class RHSTransformer(torch.nn.Module):
         self.pe = None
         if (position_encoding == "abs"):
             self.pe = PositionalEncoding(hidden_channels)
-        elif (position_encoding == "rope"):
-            # rotary pe for queries
-            self.q_pe = RotaryPositionalEmbeddings(hidden_channels)
-            # rotary pe for keys
-            self.k_pe = RotaryPositionalEmbeddings(hidden_channels)
+        elif (position_encoding == "none"):
+            self.pe = None
+        else:
+            raise NotImplementedError
 
         self.blocks = torch.nn.ModuleList([
             MultiheadAttentionBlock(
@@ -76,14 +76,7 @@ class RHSTransformer(torch.nn.Module):
 
         x, mask = to_dense_batch(rhs_embed, index)
         for block in self.blocks:
-            # apply the pe for both query and key
-            if (self.pe_type == "rope"):
-                x_q = self.q_pe(x, pos=rhs_time)
-                x_k = self.k_pe(x, pos=rhs_time)
-            else:
-                x_q = x
-                x_k = x
-            x = block(x_q, x_k)
+            x = block(x, x)
         x = x[mask]
         x = x.view(-1, self.hidden_channels)
         return self.fc(x)
