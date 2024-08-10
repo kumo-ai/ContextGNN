@@ -3,6 +3,7 @@ from typing import Any, Dict
 import torch
 from torch import Tensor
 from torch_frame.data.stats import StatType
+from torch_frame.nn.models import ResNet
 from torch_geometric.data import HeteroData
 from torch_geometric.nn import MLP
 from torch_geometric.typing import NodeType
@@ -27,6 +28,11 @@ class ShallowRHSGNN(torch.nn.Module):
         embedding_dim: int,
         aggr: str = 'sum',
         norm: str = 'layer_norm',
+        torch_frame_model_cls=ResNet,
+        torch_frame_model_kwargs: Dict[str, Any] = {
+            "channels": 128,
+            "num_layers": 4,
+        },
     ) -> None:
         super().__init__()
         self.encoder = HeteroEncoder(
@@ -37,6 +43,8 @@ class ShallowRHSGNN(torch.nn.Module):
             },
             node_to_col_stats=col_stats_dict,
             stype_encoder_cls_kwargs=DEFAULT_STYPE_ENCODER_DICT,
+            torch_frame_model_cls=torch_frame_model_cls,
+            torch_frame_model_kwargs=torch_frame_model_kwargs,
         )
         self.temporal_encoder = HeteroTemporalEncoder(
             node_types=[
