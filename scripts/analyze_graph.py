@@ -2,7 +2,6 @@ import argparse
 import json
 import os
 from pathlib import Path
-from typing import Dict, Tuple
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -12,18 +11,15 @@ from relbench.datasets import get_dataset
 from relbench.modeling.graph import make_pkey_fkey_graph
 from relbench.modeling.utils import get_stype_proposal
 from relbench.tasks import get_task
-from torch import Tensor
 from torch_frame import stype
 from torch_frame.config.text_embedder import TextEmbedderConfig
-from torch_geometric.loader import NeighborLoader
 from torch_geometric.seed import seed_everything
-from torch_geometric.typing import NodeType
 
 from hybridgnn.utils import GloveTextEmbedding
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="rel-trial")
-parser.add_argument("--task", type=str, default="site-sponsor-run")
+parser.add_argument("--dataset", type=str, default="rel-avito")
+parser.add_argument("--task", type=str, default="user-ad-visit")
 parser.add_argument(
     "--model",
     type=str,
@@ -81,25 +77,22 @@ num_neighbors = [
     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
 ]
 
-loader_dict: Dict[str, NeighborLoader] = {}
-dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
-num_dst_nodes_dict: Dict[str, int] = {}
 train_table = task.get_table("train")
 val_table = task.get_table("val")
-train_df = train_table.df.groupby('facility_id', as_index=False).agg(
-    {'sponsor_id': lambda x: set().union(*map(set, x))})
+train_df = train_table.df.groupby(task.src_entity_col, as_index=False).agg(
+    {task.dst_entity_col: lambda x: set().union(*map(set, x))})
 val_df = val_table.df
-joined_df = pd.merge(train_df, val_df, on=['facility_id'], how='right')
+joined_df = pd.merge(train_df, val_df, on=[task.src_entity_col], how='right')
 
 
 def custom_function(row):
-    if pd.isna(row['sponsor_id_x']):
+    if pd.isna(row[f'{task.dst_entity_col}_x']):
         return 0
     num_visited = 0
-    for rhs in row['sponsor_id_y']:
-        if rhs in row['sponsor_id_x']:
+    for rhs in row[f'{task.dst_entity_col}_y']:
+        if rhs in row[f'{task.dst_entity_col}_x']:
             num_visited += 1
-    return num_visited / len(row['sponsor_id_y'])
+    return num_visited / len(row[f'{task.dst_entity_col}_y'])
 
 
 # Apply the function to each row and create a new column with the results
@@ -110,13 +103,14 @@ joined_df['previously_visited_percentage'] = joined_df.apply(
 plt.figure(figsize=(10, 6))
 plt.hist(joined_df['previously_visited_percentage'], bins=50, color='blue',
          edgecolor='black')
-plt.title(f'Distribution of Previously Visited Percentage for {args.task} in '
-          f'{args.dataset}')
+plt.title(
+    f'Distribution of Previously Visited Percentage for {args.dataset} in '
+    f'{args.task}')
 plt.xlabel('Previously Visited Percentage')
 plt.ylabel('Frequency')
 
 # Save the plot to a file
-plt.savefig(f'distribution_{args.task}_{args.dataset}.png', format='png',
+plt.savefig(f'distribution_{args.dataset}_{args.task}.png', format='png',
             dpi=300)
 
 # Show the plot
