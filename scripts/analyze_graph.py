@@ -19,7 +19,7 @@ from hybridgnn.utils import GloveTextEmbedding
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-amazon")
-parser.add_argument("--task", type=str, default="user-item-rate")
+parser.add_argument("--task", type=str, default="user-item-review")
 parser.add_argument(
     "--model",
     type=str,
