@@ -134,7 +134,6 @@ elif args.model in ["rhstransformer"]:
         "norm": ["layer_norm"],
         "dropout": [0.1, 0.2],
         "pe": ["abs", "none"],
-        "num_neighbors": [args.num_neighbors],
     }
     train_search_space = {
         "batch_size": [64],
