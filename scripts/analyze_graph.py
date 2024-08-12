@@ -19,7 +19,7 @@ from hybridgnn.utils import GloveTextEmbedding
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-amazon")
-parser.add_argument("--task", type=str, default="user-item-review")
+parser.add_argument("--task", type=str, default="user-item-rate")
 parser.add_argument(
     "--model",
     type=str,
@@ -38,6 +38,7 @@ parser.add_argument("--temporal_strategy", type=str, default="last")
 parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
 parser.add_argument("--num_workers", type=int, default=0)
 parser.add_argument("--seed", type=int, default=42)
+parser.add_argument("--split", type=str, default="test")
 parser.add_argument("--cache_dir", type=str,
                     default=os.path.expanduser("~/.cache/relbench_examples"))
 args = parser.parse_args()
@@ -78,7 +79,7 @@ num_neighbors = [
 ]
 
 train_table = task.get_table("train")
-val_table = task.get_table("val")
+val_table = task.get_table(args.split)
 train_df = train_table.df.groupby(task.src_entity_col, as_index=False).agg(
     {task.dst_entity_col: lambda x: set().union(*map(set, x))})
 val_df = val_table.df
@@ -105,12 +106,12 @@ plt.hist(joined_df['previously_visited_percentage'], bins=50, color='blue',
          edgecolor='black')
 plt.title(
     f'Distribution of Previously Visited Percentage for {args.dataset} in '
-    f'{args.task}')
+    f'{args.task} in {args.split} split')
 plt.xlabel('Previously Visited Percentage')
 plt.ylabel('Frequency')
 
 # Save the plot to a file
-plt.savefig(f'distribution_{args.dataset}_{args.task}.png', format='png',
+plt.savefig(f'distribution_{args.dataset}_{args.task}_on_{args.split}.png', format='png',
             dpi=300)
 
 # Show the plot
