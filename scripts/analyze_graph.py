@@ -18,8 +18,8 @@ from torch_geometric.seed import seed_everything
 from hybridgnn.utils import GloveTextEmbedding
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="rel-avito")
-parser.add_argument("--task", type=str, default="user-ad-visit")
+parser.add_argument("--dataset", type=str, default="rel-amazon")
+parser.add_argument("--task", type=str, default="user-item-rate")
 parser.add_argument(
     "--model",
     type=str,
