@@ -1,4 +1,5 @@
 import torch
+import math
 from torch import Tensor, nn
 from torch_geometric.typing import EdgeType, NodeType
 from torch.nested import nested_tensor
@@ -61,20 +62,16 @@ class RHSTransformer(torch.nn.Module):
         self.lin.reset_parameters()
         self.fc.reset_parameters()
 
-    def forward(self, rhs_embed: Tensor, index: Tensor,
-                rhs_time: Tensor = None) -> Tensor:
+
+    def forward(self, rhs_embed: Tensor, index: Tensor, batch_size=512) -> Tensor:
         r"""Returns the attended to rhs embeddings
         """
         rhs_embed = self.lin(rhs_embed)
 
         if (self.pe_type == "abs"):
-            if (rhs_time is None):
-                rhs_embed = rhs_embed + self.pe(
-                    torch.arange(rhs_embed.size(0), device=rhs_embed.device))
-            else:
-                rhs_embed = rhs_embed + self.pe(rhs_time)
-
-        x, mask = to_dense_batch(rhs_embed, index)
+            rhs_embed = rhs_embed + self.pe(
+                torch.arange(rhs_embed.size(0), device=rhs_embed.device))
+        x, mask = to_dense_batch(rhs_embed, index, batch_size=batch_size)
         for block in self.blocks:
             x = block(x, x)
         x = x[mask]

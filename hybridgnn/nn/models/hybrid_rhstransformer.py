@@ -14,6 +14,7 @@ from hybridgnn.nn.encoder import (
 )
 from hybridgnn.nn.models import HeteroGraphSAGE
 from hybridgnn.nn.models.transformer import RHSTransformer
+from torch_scatter import scatter_max
 
 
 class Hybrid_RHSTransformer(torch.nn.Module):
@@ -108,7 +109,12 @@ class Hybrid_RHSTransformer(torch.nn.Module):
         batch: HeteroData,
         entity_table: NodeType,
         dst_table: NodeType,
+        dst_entity_col: NodeType,
     ) -> Tensor:
+        # print ("time dict has the following keys")
+        # print (batch.time_dict.keys())
+        # dict_keys(['drop_withdrawals', 'outcomes', 'outcome_analyses', 'eligibilities', 'sponsors_studies', 'facilities_studies', 'interventions_studies', 'studies', 'designs', 'reported_event_totals', 'conditions_studies'])
+
         seed_time = batch[entity_table].seed_time
         x_dict = self.encoder(batch.tf_dict)
 
@@ -134,9 +140,12 @@ class Hybrid_RHSTransformer(torch.nn.Module):
         rhs_idgnn_index = batch.n_id_dict[dst_table]  # num_sampled_rhs
         lhs_idgnn_batch = batch.batch_dict[dst_table]  # batch_size
 
+        #! need custom code to work for specific datasets
+        # rhs_time = self.get_rhs_time_dict(batch.time_dict, batch.edge_index_dict, batch[entity_table].seed_time, batch, dst_entity_col, dst_table)
+
         # adding rhs transformer
         rhs_gnn_embedding = self.rhs_transformer(rhs_gnn_embedding,
-                                                 lhs_idgnn_batch)
+                                                 lhs_idgnn_batch, batch_size=batch_size)
 
         rhs_embedding = self.rhs_embedding  # num_rhs_nodes, channel
         embgnn_logits = lhs_embedding_projected @ rhs_embedding.weight.t(
@@ -165,3 +174,57 @@ class Hybrid_RHSTransformer(torch.nn.Module):
 
         embgnn_logits[lhs_idgnn_batch, rhs_idgnn_index] = idgnn_logits
         return embgnn_logits
+
+    def get_rhs_time_dict(
+        self,
+        time_dict,
+        edge_index_dict,
+        seed_time,
+        batch_dict,
+        dst_entity_col,
+        dst_entity_table,
+    ):
+        # edge_index_dict keys
+        """
+        dict_keys([('drop_withdrawals', 'f2p_nct_id', 'studies'), 
+        ('studies', 'rev_f2p_nct_id', 'drop_withdrawals'), 
+        ('outcomes', 'f2p_nct_id', 'studies'), 
+        ('studies', 'rev_f2p_nct_id', 'outcomes'), 
+        ('outcome_analyses', 'f2p_nct_id', 'studies'), 
+        ('studies', 'rev_f2p_nct_id', 'outcome_analyses'), 
+        ('outcome_analyses', 'f2p_outcome_id', 'outcomes'), 
+        ('outcomes', 'rev_f2p_outcome_id', 'outcome_analyses'), 
+        ('eligibilities', 'f2p_nct_id', 'studies'), 
+        ('studies', 'rev_f2p_nct_id', 'eligibilities'), 
+        ('sponsors_studies', 'f2p_nct_id', 'studies'), 
+        ('studies', 'rev_f2p_nct_id', 'sponsors_studies'), 
+        ('sponsors_studies', 'f2p_sponsor_id', 'sponsors'), 
+        ('sponsors', 'rev_f2p_sponsor_id', 'sponsors_studies'), 
+        ('facilities_studies', 'f2p_nct_id', 'studies'), 
+        ('studies', 'rev_f2p_nct_id', 'facilities_studies'), 
+        ('facilities_studies', 'f2p_facility_id', 'facilities'), 
+        ('facilities', 'rev_f2p_facility_id', 'facilities_studies'), 
+        ('interventions_studies', 'f2p_nct_id', 'studies'), 
+        ('studies', 'rev_f2p_nct_id', 'interventions_studies'), 
+        ('interventions_studies', 'f2p_intervention_id', 'interventions'), 
+        ('interventions', 'rev_f2p_intervention_id', 'interventions_studies'), 
+        ('designs', 'f2p_nct_id', 'studies'), 
+        ('studies', 'rev_f2p_nct_id', 'designs'), 
+        ('reported_event_totals', 'f2p_nct_id', 'studies'), 
+        ('studies', 'rev_f2p_nct_id', 'reported_event_totals'), 
+        ('conditions_studies', 'f2p_nct_id', 'studies'), 
+        ('studies', 'rev_f2p_nct_id', 'conditions_studies'), 
+        ('conditions_studies', 'f2p_condition_id', 'conditions'), 
+        ('conditions', 'rev_f2p_condition_id', 'conditions_studies')])
+        """
+        #* what to put when transaction table is merged
+        edge_index = edge_index_dict['sponsors','f2p_sponsor_id',
+                                     'sponsors_studies']
+        rhs_time, _ = scatter_max(
+            time_dict['sponsors'][edge_index[0]],
+            edge_index[1])
+        SECONDS_IN_A_DAY = 60 * 60 * 24
+        NANOSECONDS_IN_A_DAY = 60 * 60 * 24 * 1000000000
+        rhs_rel_time = seed_time[batch_dict[dst_entity_col]] - rhs_time
+        rhs_rel_time = rhs_rel_time / NANOSECONDS_IN_A_DAY
+        return rhs_rel_time

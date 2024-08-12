@@ -13,15 +13,15 @@ Run [`benchmark/relbench_link_prediction_benchmark.py`](https://github.com/kumo-
 
 ```sh
 python relbench_link_prediction_benchmark.py --dataset rel-hm --task user-item-purcahse --model rhstransformer
-python relbench_link_prediction_benchmark.py --dataset rel-trial --task site-sponsor-run --model hybridgnn
+python relbench_link_prediction_benchmark.py --dataset rel-trial --task site-sponsor-run --model hybridgnn --num_layers 4
 ```
 
 
 Run [`examples/relbench_example.py`](https://github.com/kumo-ai/hybridgnn/blob/master/examples/relbench_example.py)
 
 ```sh
-python relbench_example.py --dataset rel-trial --task site-sponsor-run --model hybridgnn
-python relbench_example.py --dataset rel-trial --task condition-sponsor-run --model hybridgnn
+python relbench_example.py --dataset rel-trial --task site-sponsor-run --model hybridgnn --num_layers 4
+python relbench_example.py --dataset rel-trial --task condition-sponsor-run --model hybridgnn --num_layers 4
 ```
 
 

@@ -117,12 +117,12 @@ if args.model == "idgnn":
     model_cls = IDGNN
 elif args.model in ["hybridgnn", "shallowrhsgnn"]:
     model_search_space = {
-        "channels": [64, 128, 256],
-        "embedding_dim": [64, 128, 256],
+        "channels": [64, 128],
+        "embedding_dim": [64, 128],
         "norm": ["layer_norm", "batch_norm"]
     }
     train_search_space = {
-        "batch_size": [256, 512, 1024],
+        "batch_size": [256],
         "base_lr": [0.001, 0.01],
         "gamma_rate": [0.9, 0.95, 1.],
     }
@@ -136,7 +136,7 @@ elif args.model in ["rhstransformer"]:
         "pe": ["abs", "none"],
     }
     train_search_space = {
-        "batch_size": [256, 512, 1024],
+        "batch_size": [128],
         "base_lr": [0.001, 0.01, 0.0001],
         "gamma_rate": [0.9, 1.0],
     }
@@ -178,8 +178,13 @@ def train(
 
             loss = F.binary_cross_entropy_with_logits(out, target)
             numel = out.numel()
-        elif args.model in ["hybridgnn", "shallowrhsgnn", "rhstransformer"]:
+        elif args.model in ["hybridgnn", "shallowrhsgnn"]:
             logits = model(batch, task.src_entity_table, task.dst_entity_table)
+            edge_label_index = torch.stack([src_batch, dst_index], dim=0)
+            loss = sparse_cross_entropy(logits, edge_label_index)
+            numel = len(batch[task.dst_entity_table].batch)
+        elif args.model in ["rhstransformer"]:
+            logits = model(batch, task.src_entity_table, task.dst_entity_table, task.dst_entity_col)
             edge_label_index = torch.stack([src_batch, dst_index], dim=0)
             loss = sparse_cross_entropy(logits, edge_label_index)
             numel = len(batch[task.dst_entity_table].batch)
@@ -219,10 +224,15 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
                                  device=out.device)
             scores[batch[task.dst_entity_table].batch,
                    batch[task.dst_entity_table].n_id] = torch.sigmoid(out)
-        elif args.model in ["hybridgnn", "shallowrhsgnn", "rhstransformer"]:
+        elif args.model in ["hybridgnn", "shallowrhsgnn"]:
             # Get ground-truth
             out = model(batch, task.src_entity_table,
                         task.dst_entity_table).detach()
+            scores = torch.sigmoid(out)
+        elif args.model in ["rhstransformer"]:
+            out = model(batch, task.src_entity_table,
+                        task.dst_entity_table, 
+                        task.dst_entity_col).detach()
             scores = torch.sigmoid(out)
         else:
             raise ValueError(f"Unsupported model type: {args.model}.")
