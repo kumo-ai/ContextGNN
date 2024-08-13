@@ -63,7 +63,7 @@ class RHSTransformer(torch.nn.Module):
         self.fc.reset_parameters()
 
 
-    def forward(self, rhs_embed: Tensor, index: Tensor, batch_size=512) -> Tensor:
+    def forward(self, rhs_embed: Tensor, index: Tensor, batch_size) -> Tensor:
         r"""Returns the attended to rhs embeddings
         """
         rhs_embed = self.lin(rhs_embed)
@@ -73,7 +73,10 @@ class RHSTransformer(torch.nn.Module):
                 torch.arange(rhs_embed.size(0), device=rhs_embed.device))
 
         # #! if we sort the index, we need to sort the rhs_embed
-        # sorted_index, _ = torch.sort(index)
+        sorted_index, sorted_idx = torch.sort(index, stable=True)
+        index = index[sorted_idx]
+        rhs_embed = rhs_embed[sorted_idx]
+        reverse = self.inverse_permutation(sorted_idx)
         # assert torch.equal(index, sorted_index)
 
         x, mask = to_dense_batch(rhs_embed, index, batch_size=batch_size)
@@ -81,7 +84,15 @@ class RHSTransformer(torch.nn.Module):
             x = block(x, x)
         x = x[mask]
         x = x.view(-1, self.hidden_channels)
+        x = x[reverse]
+        # x = x.gather(1, sorted_idx.argsort(1))
+
         return self.fc(x)
+
+    def inverse_permutation(self,perm):
+        inv = torch.empty_like(perm)
+        inv[perm] = torch.arange(perm.size(0), device=perm.device)
+        return inv
 
 
 class RotaryPositionalEmbeddings(torch.nn.Module):
