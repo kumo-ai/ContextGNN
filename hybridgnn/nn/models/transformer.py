@@ -42,7 +42,7 @@ class RHSTransformer(torch.nn.Module):
         self.pe = None
         if (position_encoding == "abs"):
             self.pe = PositionalEncoding(hidden_channels)
-        elif (position_encoding == "none"):
+        elif (position_encoding is None):
             self.pe = None
         else:
             raise NotImplementedError

@@ -133,7 +133,7 @@ elif args.model in ["rhstransformer"]:
         "embedding_dim": [64],
         "norm": ["layer_norm"],
         "dropout": [0.1, 0.2],
-        "pe": ["abs", "none"],
+        "pe": ["abs", None],
     }
     train_search_space = {
         "batch_size": [64],

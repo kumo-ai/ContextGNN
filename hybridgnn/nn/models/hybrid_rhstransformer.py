@@ -184,39 +184,6 @@ class Hybrid_RHSTransformer(torch.nn.Module):
         dst_entity_col,
         dst_entity_table,
     ):
-        # edge_index_dict keys
-        """
-        dict_keys([('drop_withdrawals', 'f2p_nct_id', 'studies'), 
-        ('studies', 'rev_f2p_nct_id', 'drop_withdrawals'), 
-        ('outcomes', 'f2p_nct_id', 'studies'), 
-        ('studies', 'rev_f2p_nct_id', 'outcomes'), 
-        ('outcome_analyses', 'f2p_nct_id', 'studies'), 
-        ('studies', 'rev_f2p_nct_id', 'outcome_analyses'), 
-        ('outcome_analyses', 'f2p_outcome_id', 'outcomes'), 
-        ('outcomes', 'rev_f2p_outcome_id', 'outcome_analyses'), 
-        ('eligibilities', 'f2p_nct_id', 'studies'), 
-        ('studies', 'rev_f2p_nct_id', 'eligibilities'), 
-        ('sponsors_studies', 'f2p_nct_id', 'studies'), 
-        ('studies', 'rev_f2p_nct_id', 'sponsors_studies'), 
-        ('sponsors_studies', 'f2p_sponsor_id', 'sponsors'), 
-        ('sponsors', 'rev_f2p_sponsor_id', 'sponsors_studies'), 
-        ('facilities_studies', 'f2p_nct_id', 'studies'), 
-        ('studies', 'rev_f2p_nct_id', 'facilities_studies'), 
-        ('facilities_studies', 'f2p_facility_id', 'facilities'), 
-        ('facilities', 'rev_f2p_facility_id', 'facilities_studies'), 
-        ('interventions_studies', 'f2p_nct_id', 'studies'), 
-        ('studies', 'rev_f2p_nct_id', 'interventions_studies'), 
-        ('interventions_studies', 'f2p_intervention_id', 'interventions'), 
-        ('interventions', 'rev_f2p_intervention_id', 'interventions_studies'), 
-        ('designs', 'f2p_nct_id', 'studies'), 
-        ('studies', 'rev_f2p_nct_id', 'designs'), 
-        ('reported_event_totals', 'f2p_nct_id', 'studies'), 
-        ('studies', 'rev_f2p_nct_id', 'reported_event_totals'), 
-        ('conditions_studies', 'f2p_nct_id', 'studies'), 
-        ('studies', 'rev_f2p_nct_id', 'conditions_studies'), 
-        ('conditions_studies', 'f2p_condition_id', 'conditions'), 
-        ('conditions', 'rev_f2p_condition_id', 'conditions_studies')])
-        """
         #* what to put when transaction table is merged
         edge_index = edge_index_dict['sponsors','f2p_sponsor_id',
                                      'sponsors_studies']
