@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+from functools import partial
 import argparse
 import json
 import os
@@ -33,6 +35,8 @@ from tqdm import tqdm
 from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN
 from hybridgnn.utils import GloveTextEmbedding
 
+
+warnings.filterwarnings("ignore", category=FutureWarning)
 TRAIN_CONFIG_KEYS = ["batch_size", "gamma_rate", "base_lr"]
 LINK_PREDICTION_METRIC = "link_prediction_map"
 
@@ -64,13 +68,44 @@ parser.add_argument("--cache_dir", type=str,
 parser.add_argument("--result_path", type=str, default="result")
 args = parser.parse_args()
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda")
 if torch.cuda.is_available():
     torch.set_num_threads(1)
 seed_everything(args.seed)
 
 if args.dataset == "rel-trial":
     args.num_layers = 4
+
+
+@contextmanager
+def measure_time_and_memory(num_iters: int = 1):
+    torch.cuda.empty_cache()
+    torch.cuda.reset_accumulated_memory_stats()
+    torch.cuda.reset_peak_memory_stats()
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    start.record()  # type: ignore
+    yield
+    end.record()  # type: ignore
+    torch.cuda.synchronize()
+    gpu_time = start.elapsed_time(end)
+    gpu_time_in_s = gpu_time / 1000
+    print(f"total time: {gpu_time_in_s:.3f} s, "
+          f"average per-iter time: {gpu_time / num_iters:.3f} ms, "
+          f"peakmem: {torch.cuda.max_memory_allocated() / 2**30:.3f} GB")
+
+
+def _trace_handler(prof: torch.profiler.profile):
+    """Hook to be called when the profiler is done profiling."""
+    prof.export_chrome_trace(f"timeline.json")
+    print("Saved to", os.path.abspath("timeline.json"))
+
+
+profile = partial(
+    torch.profiler.profile,
+    on_trace_ready=_trace_handler,
+    with_stack=True,
+)
 
 dataset: Dataset = get_dataset(args.dataset, download=True)
 task: RecommendationTask = get_task(args.dataset, args.task, download=True)
@@ -94,7 +129,7 @@ data, col_stats_dict = make_pkey_fkey_graph(
     dataset.get_db(),
     col_to_stype_dict=col_to_stype_dict,
     text_embedder_cfg=TextEmbedderConfig(
-        text_embedder=GloveTextEmbedding(device=device), batch_size=256),
+        text_embedder=GloveTextEmbedding(device=device), batch_size=2**14),
     cache_dir=f"{args.cache_dir}/{args.dataset}/materialized",
 )
 
@@ -117,14 +152,14 @@ if args.model == "idgnn":
     model_cls = IDGNN
 elif args.model in ["hybridgnn", "shallowrhsgnn"]:
     model_search_space = {
-        "channels": [64, 128, 256],
-        "embedding_dim": [64, 128, 256],
-        "norm": ["layer_norm", "batch_norm"]
+        "channels": [128],
+        "embedding_dim": [256],
+        "norm": ["layer_norm"],
     }
     train_search_space = {
-        "batch_size": [256, 512, 1024],
-        "base_lr": [0.001, 0.01],
-        "gamma_rate": [0.9, 0.95, 1.],
+        "batch_size": [512],
+        "base_lr": [0.01, 0.1],
+        "gamma_rate": [0.95],
     }
     model_cls = (HybridGNN if args.model == "hybridgnn" else ShallowRHSGNN)
 
@@ -137,11 +172,11 @@ def train(
 ) -> float:
     model.train()
 
-    loss_accum = count_accum = 0
-    steps = 0
+    loss_accum = torch.zeros(1, device=device)
+    count_accum = 0
     total_steps = min(len(loader), args.max_steps_per_epoch)
-    for batch in tqdm(loader, total=total_steps, desc="Train"):
-        batch = batch.to(device)
+    for i, batch in tqdm(enumerate(loader), total=total_steps, desc="Train"):
+        batch = batch.to(device, non_blocking=True)
 
         # Get ground-truth
         input_id = batch[task.src_entity_table].input_id
@@ -173,11 +208,11 @@ def train(
 
         optimizer.step()
 
-        loss_accum += float(loss) * numel
+        loss *= numel
+        loss_accum += loss
         count_accum += numel
 
-        steps += 1
-        if steps > args.max_steps_per_epoch:
+        if i >= args.max_steps_per_epoch:
             break
 
     if count_accum == 0:
@@ -186,7 +221,7 @@ def train(
                       f"of layers/hops and re-try. If you run into memory "
                       f"issues with deeper nets, decrease the batch size.")
 
-    return loss_accum / count_accum if count_accum > 0 else float("nan")
+    return float(loss_accum / count_accum) if count_accum > 0 else float("nan")
 
 
 @torch.no_grad()
@@ -199,17 +234,16 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
         batch_size = batch[task.src_entity_table].batch_size
 
         if args.model == "idgnn":
-            out = (model.forward(batch, task.src_entity_table,
-                                 task.dst_entity_table).detach().flatten())
-            scores = torch.zeros(batch_size, task.num_dst_nodes,
-                                 device=out.device)
-            scores[batch[task.dst_entity_table].batch,
-                   batch[task.dst_entity_table].n_id] = torch.sigmoid(out)
+            out = model(
+                batch,
+                task.src_entity_table,
+                task.dst_entity_table,
+            ).flatten()
+            scores = torch.zeros(batch_size, task.num_dst_nodes, device=out.device)
+            scores[batch[task.dst_entity_table].batch, batch[task.dst_entity_table].n_id] = out.sigmoid()
         elif args.model in ["hybridgnn", "shallowrhsgnn"]:
             # Get ground-truth
-            out = model(batch, task.src_entity_table,
-                        task.dst_entity_table).detach()
-            scores = torch.sigmoid(out)
+            scores = model(batch, task.src_entity_table, task.dst_entity_table).sigmoid()
         else:
             raise ValueError(f"Unsupported model type: {args.model}.")
 
@@ -263,29 +297,26 @@ def train_and_eval_with_cfg(
     best_val_metric: float = 0.0
     best_test_metric: float = 0.0
 
-    for epoch in range(1, args.epochs + 1):
-        train_sparse_tensor = SparseTensor(dst_nodes_dict["train"][1],
-                                           device=device)
-        train_loss = train(model, optimizer, loader_dict["train"],
-                           train_sparse_tensor)
+    args.max_steps_per_epoch = 30
+
+    with measure_time_and_memory():
+        train(model, optimizer, loader_dict["train"], SparseTensor(dst_nodes_dict["train"][1], device=device))
         optimizer.zero_grad()
-        val_metric = test(model, loader_dict["val"], "val")
 
-        if val_metric > best_val_metric:
-            best_val_metric = val_metric
-            best_test_metric = test(model, loader_dict["test"], "test")
+    args.max_steps_per_epoch = 5
 
-        lr_scheduler.step()
-        print(f"Train Loss: {train_loss:.4f}, Val: {val_metric:.4f}")
+    with profile():
+        train(model, optimizer, loader_dict["train"], SparseTensor(dst_nodes_dict["train"][1], device=device))
+        optimizer.zero_grad()
 
-        if trial is not None:
-            trial.report(val_metric, epoch)
-            if trial.should_prune():
-                raise optuna.TrialPruned()
+    print("done profiling.")
 
-    print(
-        f"Best val: {best_val_metric:.4f}, Best test: {best_test_metric:.4f}")
-    return best_val_metric, best_test_metric
+    args.max_steps_per_epoch = 1
+    breakpoint()
+
+    train(model, optimizer, loader_dict["train"], SparseTensor(dst_nodes_dict["train"][1], device=device))
+
+    exit(0)
 
 
 def objective(trial: optuna.trial.Trial) -> float:
@@ -366,3 +397,4 @@ def main_gnn() -> None:
 if __name__ == "__main__":
     print(args)
     main_gnn()
+
