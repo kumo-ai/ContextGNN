@@ -72,8 +72,9 @@ class RHSTransformer(torch.nn.Module):
             rhs_embed = rhs_embed + self.pe(
                 torch.arange(rhs_embed.size(0), device=rhs_embed.device))
 
-        sorted_index, _ = torch.sort(index)
-        index = sorted_index
+        # #! if we sort the index, we need to sort the rhs_embed
+        # sorted_index, _ = torch.sort(index)
+        # assert torch.equal(index, sorted_index)
 
         x, mask = to_dense_batch(rhs_embed, index, batch_size=batch_size)
         for block in self.blocks:
