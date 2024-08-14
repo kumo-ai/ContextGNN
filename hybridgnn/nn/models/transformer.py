@@ -77,7 +77,6 @@ class RHSTransformer(torch.nn.Module):
         index = index[sorted_idx]
         rhs_embed = rhs_embed[sorted_idx]
         reverse = self.inverse_permutation(sorted_idx)
-        # assert torch.equal(index, sorted_index)
 
         x, mask = to_dense_batch(rhs_embed, index, batch_size=batch_size)
         for block in self.blocks:
@@ -85,8 +84,6 @@ class RHSTransformer(torch.nn.Module):
         x = x[mask]
         x = x.view(-1, self.hidden_channels)
         x = x[reverse]
-        # x = x.gather(1, sorted_idx.argsort(1))
-
         return self.fc(x)
 
     def inverse_permutation(self,perm):

@@ -133,11 +133,11 @@ elif args.model in ["rhstransformer"]:
         "embedding_dim": [64],
         "norm": ["layer_norm"],
         "dropout": [0.1, 0.2],
-        "pe": ["abs", None],
+        "pe": [None],
     }
     train_search_space = {
-        "batch_size": [64],
-        "base_lr": [0.001, 0.01, 0.0001],
+        "batch_size": [512],
+        "base_lr": [0.0005, 0.01],
         "gamma_rate": [0.9, 1.0],
     }
     model_cls = Hybrid_RHSTransformer
