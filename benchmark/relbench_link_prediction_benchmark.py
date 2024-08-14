@@ -129,14 +129,14 @@ elif args.model in ["hybridgnn", "shallowrhsgnn"]:
     model_cls = (HybridGNN if args.model == "hybridgnn" else ShallowRHSGNN)
 elif args.model in ["rhstransformer"]:
     model_search_space = {
-        "channels": [64],
-        "embedding_dim": [64],
+        "channels": [64, 128],
+        "embedding_dim": [64, 128],
         "norm": ["layer_norm"],
         "dropout": [0.1, 0.2],
         "pe": [None],
     }
     train_search_space = {
-        "batch_size": [512],
+        "batch_size": [128, 256, 512],
         "base_lr": [0.0005, 0.01],
         "gamma_rate": [0.9, 1.0],
     }
