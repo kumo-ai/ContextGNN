@@ -5,8 +5,6 @@ import pandas as pd
 import torch
 import torch_frame
 from kumoapi.model_plan import RHSEmbeddingMode
-from kumoml.knn import MIPSFaiss
-from kumoml.nn import Embedding
 from torch import Tensor
 from torch_frame import TensorFrame
 from torch_frame.nn.models.resnet import FCResidualBlock
@@ -22,6 +20,8 @@ class RHSEmbedding(torch.nn.Module):
     def __init__(self,
                  emb_mode: str,
                  embedding_dim: int,
+                 num_nodes: int,
+                 init_std: float = 1.0,
                  encoder_dict: dict[str, Encoder] | None = None,):
         self.emb_mode = emb_mode
         self.encoder = TensorFrameEncoder(
@@ -39,6 +39,8 @@ class RHSEmbedding(torch.nn.Module):
                 ]
         seqs += [torch.nn.LayerNorm(embedding_dim, eps=1e-7)]
         self.projector = torch.nn.Sequential(*seqs)
+        self.lookup_embedding = torch.nn.Embedding(num_nodes, embedding_dim)
+        self.init_std = init_std
         self.reset_parameters()
     
     def reset_parameters(self):
@@ -51,3 +53,16 @@ class RHSEmbedding(torch.nn.Module):
                 child.reset_parameters()
                 if isinstance(child, torch.nn.LayerNorm):
                     child.weight.data *= self.init_std
+
+    def forward(self, index: Tensor | None = None, feat: Tensor | None = None) -> Tensor:
+        outs = []
+        if self.emb_mode in ["lookup", "fusion"]:
+            assert index is not None
+            outs.append(self.lookup_embedding(index))
+        if self.emb_mode in ["feature", "fusion"]:
+            out = self.encoder(feat)
+            out = self.projector(out)
+            outs.append(out)
+        import pdb
+        pdb.set_trace()
+        return
