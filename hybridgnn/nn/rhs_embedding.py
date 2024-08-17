@@ -1,3 +1,5 @@
+from typing import List
+
 import torch
 from torch import Tensor
 from torch_frame.nn import StypeWiseFeatureEncoder
@@ -31,7 +33,7 @@ class RHSEmbedding(torch.nn.Module):
                 col_names_dict=col_names_dict,
                 stype_encoder_dict=stype_encoder_dict)
 
-            seqs: list[torch.nn.Module] = []
+            seqs: List[torch.nn.Module] = []
             if self.emb_mode in [
                     RHSEmbeddingMode.FEATURE, RHSEmbeddingMode.FUSION
             ]:
