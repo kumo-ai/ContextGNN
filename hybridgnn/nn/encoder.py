@@ -70,6 +70,8 @@ class HeteroEncoder(torch.nn.Module):
                     **stype_encoder_cls_kwargs[stype][1])
                 for stype in node_to_col_names_dict[node_type].keys()
             }
+            import pdb
+            pdb.set_trace()
 
             self.encoders[node_type] = torch_frame_model_cls(
                 **torch_frame_model_kwargs,
