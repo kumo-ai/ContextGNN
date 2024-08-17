@@ -8,9 +8,7 @@ from hybridgnn.nn.rhs_embedding import RHSEmbedding
 from hybridgnn.utils import RHSEmbeddingMode
 
 
-@pytest.mark.parametrize('emb_mode', [
-    RHSEmbeddingMode.LOOKUP, RHSEmbeddingMode.FEATURE, RHSEmbeddingMode.FUSION
-])
+@pytest.mark.parametrize('emb_mode', list(RHSEmbeddingMode))
 def test_rhs_embedding(emb_mode):
     df = pd.DataFrame({'A': [0.1, 0.2, 0.3, 0.4, 0.5], 'B': [0, 1, 0, 1, 0]})
 
@@ -24,6 +22,8 @@ def test_rhs_embedding(emb_mode):
             torch_frame.categorical: torch_frame.nn.EmbeddingEncoder(),
             torch_frame.numerical: torch_frame.nn.LinearEncoder(),
         })
-    index = torch.tensor([1, 3, 2, 4, 5])
+    index = torch.tensor([1, 3, 2, 4, 0])
 
-    model(index, dataset.tensor_frame)
+    out = model(index, dataset.tensor_frame)
+    assert out.shape[0] == len(index)
+    assert out.shape[1] == 8

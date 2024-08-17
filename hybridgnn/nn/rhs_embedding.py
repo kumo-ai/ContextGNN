@@ -21,21 +21,27 @@ class RHSEmbedding(torch.nn.Module):
         super().__init__()
         self.emb_mode = emb_mode
         # Encodes the column features of a table into a shared embedding space.
-        self.encoder = StypeWiseFeatureEncoder(
-            out_channels=embedding_dim, col_stats=col_stats,
-            col_names_dict=col_names_dict,
-            stype_encoder_dict=stype_encoder_dict)
-
-        seqs: list[torch.nn.Module] = []
+        self.encoder = None
+        self.projector = None
         if self.emb_mode in [
                 RHSEmbeddingMode.FEATURE, RHSEmbeddingMode.FUSION
         ]:
-            seqs += [  # Apply deep RHS projector for pure feature mode.
-                FCResidualBlock(embedding_dim, embedding_dim),
-                FCResidualBlock(embedding_dim, embedding_dim),
-            ]
-        seqs += [torch.nn.LayerNorm(embedding_dim, eps=1e-7)]
-        self.projector = torch.nn.Sequential(*seqs)
+            self.encoder = StypeWiseFeatureEncoder(
+                out_channels=embedding_dim, col_stats=col_stats,
+                col_names_dict=col_names_dict,
+                stype_encoder_dict=stype_encoder_dict)
+
+            seqs: list[torch.nn.Module] = []
+            if self.emb_mode in [
+                    RHSEmbeddingMode.FEATURE, RHSEmbeddingMode.FUSION
+            ]:
+                seqs += [  # Apply deep RHS projector for pure feature mode.
+                    FCResidualBlock(embedding_dim, embedding_dim),
+                    FCResidualBlock(embedding_dim, embedding_dim),
+                ]
+            seqs += [torch.nn.LayerNorm(embedding_dim, eps=1e-7)]
+            self.projector = torch.nn.Sequential(*seqs)
+        self.lookup_embedding = None
         if self.emb_mode in [RHSEmbeddingMode.FUSION, RHSEmbeddingMode.LOOKUP]:
             self.lookup_embedding = torch.nn.Embedding(num_nodes,
                                                        embedding_dim)
@@ -58,17 +64,14 @@ class RHSEmbedding(torch.nn.Module):
     def forward(self, index: Tensor | None = None,
                 feat: Tensor | None = None) -> Tensor:
         outs = []
-        import pdb
-        pdb.set_trace()
-        if self.emb_mode in [RHSEmbeddingMode.LOOKUP, RHSEmbeddingMode.FUSION]:
+        if self.lookup_embedding is not None:
             assert index is not None
             outs.append(self.lookup_embedding(index))
-        if self.emb_mode in [
-                RHSEmbeddingMode.FEATURE, RHSEmbeddingMode.FUSION
-        ]:
+        if self.encoder is not None and self.projector is not None:
+            assert feat is not None
             out = self.encoder(feat)[0]
             out = self.projector(out)
+            # fuse
+            out = torch.sum(out, dim=1)
             outs.append(out)
-        import pdb
-        pdb.set_trace()
-        return outs
+        return sum(outs)
