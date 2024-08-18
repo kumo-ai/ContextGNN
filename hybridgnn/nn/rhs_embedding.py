@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 import torch
 from torch import Tensor
@@ -63,8 +63,8 @@ class RHSEmbedding(torch.nn.Module):
                 if isinstance(child, torch.nn.LayerNorm):
                     child.weight.data *= self.init_std
 
-    def forward(self, index: Tensor | None = None,
-                feat: Tensor | None = None) -> Tensor:
+    def forward(self, index: Optional[Tensor] = None,
+                feat: Optional[Tensor] = None) -> Tensor:
         outs = []
         if self.lookup_embedding is not None:
             assert index is not None
