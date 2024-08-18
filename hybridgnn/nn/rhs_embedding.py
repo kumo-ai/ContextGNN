@@ -2,9 +2,9 @@ from typing import List, Optional
 
 import torch
 from torch import Tensor
+from torch_frame import TensorFrame
 from torch_frame.nn import StypeWiseFeatureEncoder
 from torch_frame.nn.models.resnet import FCResidualBlock
-from torch_geometric.data import HeteroData
 
 from hybridgnn.utils import RHSEmbeddingMode
 
@@ -13,13 +13,13 @@ class RHSEmbedding(torch.nn.Module):
     r"""RHSEmbedding module for GNNs."""
     def __init__(
         self,
-        data: HeteroData,
         emb_mode: RHSEmbeddingMode,
         embedding_dim: int,
         num_nodes: int,
         col_stats: dict,
         col_names_dict: dict,
         stype_encoder_dict: dict,
+        feat: Optional[TensorFrame] = None,
         init_std: float = 1.0,
     ):
         super().__init__()
@@ -39,13 +39,14 @@ class RHSEmbedding(torch.nn.Module):
             if self.emb_mode in [
                     RHSEmbeddingMode.FEATURE, RHSEmbeddingMode.FUSION
             ]:
-                seqs += [  # Apply deep RHS projector for pure feature mode.
+                assert feat is not None
+                self._feat = feat
+                seqs += [
                     FCResidualBlock(embedding_dim, embedding_dim),
                     FCResidualBlock(embedding_dim, embedding_dim),
                 ]
             seqs += [torch.nn.LayerNorm(embedding_dim, eps=1e-7)]
             self.projector = torch.nn.Sequential(*seqs)
-            self._feat = data['product']['tf']
         self.lookup_embedding = None
         if self.emb_mode in [RHSEmbeddingMode.FUSION, RHSEmbeddingMode.LOOKUP]:
             self.lookup_embedding = torch.nn.Embedding(num_nodes,

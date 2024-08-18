@@ -27,16 +27,15 @@ def test_rhs_embedding(tmp_path, emb_mode):
                                              batch_size=None),
         cache_dir=tmp_path,
     )
-    # Ensure that full-batch model works as expected ##########################
     task = UserItemPurchaseTask(dataset)
     assert task.task_type == TaskType.LINK_PREDICTION
     train_table = task.get_table("train")
     train_table_input = get_link_train_table_input(train_table, task)
     embedding_dim = 8
+    feat = data[task.dst_entity_table]['tf']
     model = RHSEmbedding(
-        data=data, emb_mode=emb_mode,
-        num_nodes=train_table_input.num_dst_nodes, embedding_dim=embedding_dim,
-        col_stats=col_stats_dict['product'],
+        emb_mode=emb_mode, num_nodes=train_table_input.num_dst_nodes,
+        embedding_dim=embedding_dim, col_stats=col_stats_dict['product'],
         col_names_dict=data['product']['tf'].col_names_dict,
         stype_encoder_dict={
             torch_frame.categorical:
@@ -47,7 +46,7 @@ def test_rhs_embedding(tmp_path, emb_mode):
             torch_frame.nn.MultiCategoricalEmbeddingEncoder(),
             torch_frame.embedding:
             torch_frame.nn.LinearEmbeddingEncoder(),
-        })
+        }, feat=feat)
 
     out = model()
     assert out.shape[0] == train_table_input.num_dst_nodes
