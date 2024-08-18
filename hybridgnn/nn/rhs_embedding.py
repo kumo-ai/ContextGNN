@@ -39,7 +39,9 @@ class RHSEmbedding(torch.nn.Module):
             if self.emb_mode in [
                     RHSEmbeddingMode.FEATURE, RHSEmbeddingMode.FUSION
             ]:
-                assert feat is not None
+                if feat is None:
+                    raise ValueError(f"RHSEmbedding mode {self.emb_mode} "
+                                     f"requires feat data.")
                 self._feat = feat
                 seqs += [
                     FCResidualBlock(embedding_dim, embedding_dim),
