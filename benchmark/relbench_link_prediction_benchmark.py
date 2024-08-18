@@ -1,3 +1,6 @@
+from torchrec.optim import RowWiseAdagrad
+from functools import partial
+import warnings
 import argparse
 import json
 import os
@@ -6,6 +9,7 @@ import time
 import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from contextlib import contextmanager
 
 import numpy as np
 import optuna
@@ -32,6 +36,9 @@ from tqdm import tqdm
 
 from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN
 from hybridgnn.utils import GloveTextEmbedding
+warnings.filterwarnings("ignore", category=FutureWarning, message="You are using")
+
+
 
 TRAIN_CONFIG_KEYS = ["batch_size", "gamma_rate", "base_lr"]
 LINK_PREDICTION_METRIC = "link_prediction_map"
@@ -44,6 +51,12 @@ parser.add_argument(
     type=str,
     default="hybridgnn",
     choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
+)
+parser.add_argument(
+    "--optimizer",
+    type=str,
+    default="full",
+    choices=["full", "rowwise"],
 )
 parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--num_trials", type=int, default=10,
@@ -68,6 +81,40 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if torch.cuda.is_available():
     torch.set_num_threads(1)
 seed_everything(args.seed)
+
+
+def _trace_handler(prof: torch.profiler.profile):
+    """Hook to be called when the profiler is done profiling."""
+    from datetime import datetime
+    filename = f'timeline_{datetime.now().strftime("%Y_%m_%d_%H_%M_%S")}.json'
+    prof.export_chrome_trace(filename)
+    print(f"Open '{filename}' in 'https://ui.perfetto.dev'.")
+
+
+# Alias to PyTorch profiler but with a callback hook saving a trace file.
+profile = partial(
+    torch.profiler.profile,
+    on_trace_ready=_trace_handler,
+    with_stack=True,
+)
+
+@contextmanager
+def measure_time_and_memory(num_iters: int = 1):
+    torch.cuda.empty_cache()
+    torch.cuda.reset_accumulated_memory_stats()
+    torch.cuda.reset_peak_memory_stats()
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    start.record()  # type: ignore
+    yield
+    end.record()  # type: ignore
+    torch.cuda.synchronize()
+    gpu_time = start.elapsed_time(end)
+    gpu_time_in_s = gpu_time / 1000
+    print(f"total time: {gpu_time_in_s:.3f} s, "
+          f"average per-iter time: {gpu_time / num_iters:.3f} ms, "
+          f"peakmem: {torch.cuda.max_memory_allocated() / 2**30:.3f} GB")
+
 
 if args.dataset == "rel-trial":
     args.num_layers = 4
@@ -117,12 +164,12 @@ if args.model == "idgnn":
     model_cls = IDGNN
 elif args.model in ["hybridgnn", "shallowrhsgnn"]:
     model_search_space = {
-        "channels": [64, 128, 256],
-        "embedding_dim": [64, 128, 256],
-        "norm": ["layer_norm", "batch_norm"]
+        "channels": [512],
+        "embedding_dim": [128],
+        "norm": ["layer_norm"],
     }
     train_search_space = {
-        "batch_size": [256, 512, 1024],
+        "batch_size": [64],
         "base_lr": [0.001, 0.01],
         "gamma_rate": [0.9, 0.95, 1.],
     }
@@ -131,7 +178,7 @@ elif args.model in ["hybridgnn", "shallowrhsgnn"]:
 
 def train(
     model: torch.nn.Module,
-    optimizer: torch.optim.Optimizer,
+    optimizers: torch.optim.Optimizer,
     loader: NeighborLoader,
     train_sparse_tensor: SparseTensor,
 ) -> float:
@@ -148,7 +195,7 @@ def train(
         src_batch, dst_index = train_sparse_tensor[input_id]
 
         # Optimization
-        optimizer.zero_grad()
+        [opt.zero_grad() for opt in optimizers]
 
         if args.model == "idgnn":
             out = model(batch, task.src_entity_table,
@@ -171,7 +218,7 @@ def train(
             numel = len(batch[task.dst_entity_table].batch)
         loss.backward()
 
-        optimizer.step()
+        [opt.step() for opt in optimizers]
 
         loss_accum += float(loss) * numel
         count_accum += numel
@@ -257,25 +304,54 @@ def train_and_eval_with_cfg(
                       num_layers=args.num_layers).to(device)
     model.reset_parameters()
     # Use train_cfg to set up training procedure
-    optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg["base_lr"])
-    lr_scheduler = ExponentialLR(optimizer, gamma=train_cfg["gamma_rate"])
+    if args.optimizer == "full":
+        optimizers = [
+            torch.optim.Adam(
+                model.parameters(),
+                lr=train_cfg["base_lr"],
+            ),
+        ]
+    elif args.optimizer == "rowwise":
+        optimizers = [
+            torch.optim.Adam(
+                [p for name, p in model.named_parameters()
+                 if 'rhs_embedding' not in name],
+                lr=train_cfg["base_lr"],
+            ),
+            RowWiseAdagrad(  # TODO: Use row wise or partial adam
+                model.rhs_embedding.parameters(),
+                lr=train_cfg["base_lr"],
+            ),
+        ]
+
+    lr_schedulers = [
+        ExponentialLR(optimizer, gamma=train_cfg["gamma_rate"])
+        for optimizer in optimizers
+    ]
 
     best_val_metric: float = 0.0
     best_test_metric: float = 0.0
 
     for epoch in range(1, args.epochs + 1):
-        train_sparse_tensor = SparseTensor(dst_nodes_dict["train"][1],
-                                           device=device)
-        train_loss = train(model, optimizer, loader_dict["train"],
-                           train_sparse_tensor)
-        optimizer.zero_grad()
-        val_metric = test(model, loader_dict["val"], "val")
+        with measure_time_and_memory(args.max_steps_per_epoch):
+            train_loss = train(
+                model,
+                optimizers,
+                loader_dict["train"],
+                SparseTensor(dst_nodes_dict["train"][1], device=device),
+            )
+            [opt.zero_grad() for opt in optimizers]
+
+        with measure_time_and_memory():
+            val_metric = test(model, loader_dict["val"], "val")
 
         if val_metric > best_val_metric:
             best_val_metric = val_metric
-            best_test_metric = test(model, loader_dict["test"], "test")
+            with measure_time_and_memory():
+                best_test_metric = test(model, loader_dict["test"], "test")
 
-        lr_scheduler.step()
+        [lr_scheduler.step() for lr_scheduler in lr_schedulers]
+
         print(f"Train Loss: {train_loss:.4f}, Val: {val_metric:.4f}")
 
         if trial is not None:
