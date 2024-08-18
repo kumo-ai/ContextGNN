@@ -4,6 +4,7 @@ import torch
 from torch import Tensor
 from torch_frame.nn import StypeWiseFeatureEncoder
 from torch_frame.nn.models.resnet import FCResidualBlock
+from torch_geometric.data import HeteroData
 
 from hybridgnn.utils import RHSEmbeddingMode
 
@@ -12,6 +13,7 @@ class RHSEmbedding(torch.nn.Module):
     r"""RHSEmbedding module for GNNs."""
     def __init__(
         self,
+        data: HeteroData,
         emb_mode: RHSEmbeddingMode,
         embedding_dim: int,
         num_nodes: int,
@@ -43,6 +45,7 @@ class RHSEmbedding(torch.nn.Module):
                 ]
             seqs += [torch.nn.LayerNorm(embedding_dim, eps=1e-7)]
             self.projector = torch.nn.Sequential(*seqs)
+            self._feat = data['product']['tf']
         self.lookup_embedding = None
         if self.emb_mode in [RHSEmbeddingMode.FUSION, RHSEmbeddingMode.LOOKUP]:
             self.lookup_embedding = torch.nn.Embedding(num_nodes,
@@ -63,15 +66,17 @@ class RHSEmbedding(torch.nn.Module):
                 if isinstance(child, torch.nn.LayerNorm):
                     child.weight.data *= self.init_std
 
-    def forward(self, index: Optional[Tensor] = None,
-                feat: Optional[Tensor] = None) -> Tensor:
+    def forward(self, index: Optional[Tensor] = None) -> Tensor:
         outs = []
         if self.lookup_embedding is not None:
-            assert index is not None
-            outs.append(self.lookup_embedding(index))
+            if index is not None:
+                outs.append(self.lookup_embedding(index))
+            else:
+                outs.append(self.lookup_embedding.weight)
         if self.encoder is not None and self.projector is not None:
-            assert feat is not None
-            out = self.encoder(feat)[0]
+            assert self._feat is not None
+
+            out = self.encoder(self._feat)[0]
             out = self.projector(out)
             # fuse
             out = torch.sum(out, dim=1)
