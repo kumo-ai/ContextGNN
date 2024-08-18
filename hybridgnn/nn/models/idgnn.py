@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import torch
 from torch import Tensor
@@ -27,11 +27,8 @@ class IDGNN(torch.nn.Module):
         out_channels: int,
         aggr: str = 'sum',
         norm: str = 'layer_norm',
-        torch_frame_model_cls=ResNet,
-        torch_frame_model_kwargs: Dict[str, Any] = {
-            "channels": 128,
-            "num_layers": 4,
-        },
+        torch_frame_model_cls: torch.nn.Module = ResNet,
+        torch_frame_model_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
 

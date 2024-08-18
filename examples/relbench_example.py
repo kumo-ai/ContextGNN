@@ -1,7 +1,7 @@
-"""
-example command
+"""Command to run the script:
 
-python relbench_example.py --dataset rel-trial --task site-sponsor-run --model hybridgnn --epochs 10
+python relbench_example.py --dataset rel-trial --task site-sponsor-run
+    --model hybridgnn --epochs 10
 """
 
 import argparse
@@ -128,6 +128,10 @@ if args.model == "idgnn":
         out_channels=1,
         aggr=args.aggr,
         norm="layer_norm",
+        torch_frame_model_kwargs={
+            "channels": 128,
+            "num_layers": 4,
+        },
     ).to(device)
 elif args.model == "hybridgnn":
     model = HybridGNN(
@@ -139,6 +143,10 @@ elif args.model == "hybridgnn":
         aggr="sum",
         norm="layer_norm",
         embedding_dim=64,
+        torch_frame_model_kwargs={
+            "channels": 128,
+            "num_layers": 4,
+        },
     ).to(device)
 elif args.model == 'shallowrhsgnn':
     model = ShallowRHSGNN(
@@ -150,6 +158,10 @@ elif args.model == 'shallowrhsgnn':
         aggr="sum",
         norm="layer_norm",
         embedding_dim=64,
+        torch_frame_model_kwargs={
+            "channels": 128,
+            "num_layers": 4,
+        },
     ).to(device)
 else:
     raise ValueError(f"Unsupported model type {args.model}.")

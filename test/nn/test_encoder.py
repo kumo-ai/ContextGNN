@@ -27,8 +27,15 @@ def test_encoder(tmp_path):
     # Ensure that full-batch model works as expected ##########################
 
     encoder = HeteroEncoder(
-        64, node_to_col_names_dict, col_stats_dict,
-        stype_encoder_cls_kwargs=DEFAULT_STYPE_ENCODER_DICT)
+        64,
+        node_to_col_names_dict,
+        col_stats_dict,
+        stype_encoder_cls_kwargs=DEFAULT_STYPE_ENCODER_DICT,
+        torch_frame_model_kwargs={
+            "channels": 128,
+            "num_layers": 4,
+        },
+    )
 
     x_dict = encoder(data.tf_dict)
     assert 'product' in x_dict.keys()

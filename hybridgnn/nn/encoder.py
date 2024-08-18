@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import torch
 import torch_frame
@@ -54,10 +54,7 @@ class HeteroEncoder(torch.nn.Module):
         node_to_col_stats: Dict[NodeType, Dict[str, Dict[StatType, Any]]],
         stype_encoder_cls_kwargs: Dict[torch_frame.stype, Any],
         torch_frame_model_cls=ResNet,
-        torch_frame_model_kwargs: Dict[str, Any] = {
-            "channels": 128,
-            "num_layers": 4,
-        },
+        torch_frame_model_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
 
