@@ -45,8 +45,19 @@ def test_idgnn(tmp_path):
     batch = next(iter(train_loader))
 
     assert len(batch[task.dst_entity_table].batch) > 0
-    model = IDGNN(data=data, col_stats_dict=col_stats_dict, num_layers=2,
-                  channels=64, out_channels=1, aggr="sum", norm="layer_norm")
+    model = IDGNN(
+        data=data,
+        col_stats_dict=col_stats_dict,
+        num_layers=2,
+        channels=64,
+        out_channels=1,
+        aggr="sum",
+        norm="layer_norm",
+        torch_frame_model_kwargs={
+            "channels": 128,
+            "num_layers": 4,
+        },
+    )
     model.train()
 
     out = model(batch, task.src_entity_table, task.dst_entity_table).flatten()
@@ -88,10 +99,20 @@ def test_hybridgnn(tmp_path):
 
     channels = 16
     embedding_dim = 8
-    model = HybridGNN(data=data, col_stats_dict=col_stats_dict,
-                      num_nodes=train_table_input.num_dst_nodes, num_layers=2,
-                      channels=channels, aggr="sum", norm="layer_norm",
-                      embedding_dim=embedding_dim)
+    model = HybridGNN(
+        data=data,
+        col_stats_dict=col_stats_dict,
+        num_nodes=train_table_input.num_dst_nodes,
+        num_layers=2,
+        channels=channels,
+        aggr="sum",
+        norm="layer_norm",
+        embedding_dim=embedding_dim,
+        torch_frame_model_kwargs={
+            "channels": 128,
+            "num_layers": 4,
+        },
+    )
     model.train()
 
     logits = model(batch, task.src_entity_table, task.dst_entity_table)
@@ -135,10 +156,20 @@ def test_shallowrhsgnn(tmp_path):
 
     channels = 16
     embedding_dim = 8
-    model = ShallowRHSGNN(data=data, col_stats_dict=col_stats_dict,
-                          num_nodes=train_table_input.num_dst_nodes,
-                          num_layers=2, channels=channels, aggr="sum",
-                          norm="layer_norm", embedding_dim=embedding_dim)
+    model = ShallowRHSGNN(
+        data=data,
+        col_stats_dict=col_stats_dict,
+        num_nodes=train_table_input.num_dst_nodes,
+        num_layers=2,
+        channels=channels,
+        aggr="sum",
+        norm="layer_norm",
+        embedding_dim=embedding_dim,
+        torch_frame_model_kwargs={
+            "channels": 128,
+            "num_layers": 4,
+        },
+    )
     model.train()
 
     logits = model(batch, task.src_entity_table, task.dst_entity_table)
