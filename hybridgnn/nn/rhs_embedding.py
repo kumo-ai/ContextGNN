@@ -21,19 +21,21 @@ class RHSEmbedding(torch.nn.Module):
         stype_encoder_dict: dict,
         feat: Optional[TensorFrame] = None,
         init_std: float = 1.0,
-    ):
+    ) -> None:
         super().__init__()
         self.emb_mode = emb_mode
         # Encodes the column features of a table into a shared embedding space.
-        self.encoder = None
-        self.projector = None
+        self.encoder: Optional[StypeWiseFeatureEncoder] = None
+        self.projector: Optional[torch.nn.Sequential] = None
         if self.emb_mode in [
                 RHSEmbeddingMode.FEATURE, RHSEmbeddingMode.FUSION
         ]:
             self.encoder = StypeWiseFeatureEncoder(
-                out_channels=embedding_dim, col_stats=col_stats,
+                out_channels=embedding_dim,
+                col_stats=col_stats,
                 col_names_dict=col_names_dict,
-                stype_encoder_dict=stype_encoder_dict)
+                stype_encoder_dict=stype_encoder_dict,
+            )
 
             seqs: List[torch.nn.Module] = []
             if self.emb_mode in [
@@ -49,14 +51,15 @@ class RHSEmbedding(torch.nn.Module):
                 ]
             seqs += [torch.nn.LayerNorm(embedding_dim, eps=1e-7)]
             self.projector = torch.nn.Sequential(*seqs)
-        self.lookup_embedding = None
-        if self.emb_mode in [RHSEmbeddingMode.FUSION, RHSEmbeddingMode.LOOKUP]:
+
+        self.lookup_embedding: Optional[torch.nn.Embedding] = None
+        if self.emb_mode in [RHSEmbeddingMode.LOOKUP, RHSEmbeddingMode.FUSION]:
             self.lookup_embedding = torch.nn.Embedding(num_nodes,
                                                        embedding_dim)
         self.init_std = init_std
         self.reset_parameters()
 
-    def reset_parameters(self):
+    def reset_parameters(self) -> None:
         if self.lookup_embedding is not None:
             self.lookup_embedding.reset_parameters()
         if self.encoder is not None:
