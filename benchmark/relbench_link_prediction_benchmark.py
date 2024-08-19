@@ -258,13 +258,21 @@ def train_and_eval_with_cfg(
         model_cfg["out_channels"] = 1
     encoder_model_kwargs = {
         "channels": model_cfg["encoder_channels"],
-        "num_layers": model_cfg["encoder_layers"]
+        "num_layers": model_cfg["encoder_layers"],
     }
-    model_kwargs = {k: v for k,v in model_cfg.items() if k not in ["encoder_channels", "encoder_layers"]}
+    model_kwargs = {
+        k: v
+        for k, v in model_cfg.items()
+        if k not in ["encoder_channels", "encoder_layers"]
+    }
     # Use model_cfg to set up training procedure
-    model = model_cls(**model_kwargs, data=data, col_stats_dict=col_stats_dict,
-                      num_layers=args.num_layers,
-                      torch_frame_model_kwargs=encoder_model_kwargs).to(device)
+    model = model_cls(
+        **model_kwargs,
+        data=data,
+        col_stats_dict=col_stats_dict,
+        num_layers=args.num_layers,
+        torch_frame_model_kwargs=encoder_model_kwargs,
+    ).to(device)
     model.reset_parameters()
     # Use train_cfg to set up training procedure
     optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg["base_lr"])
