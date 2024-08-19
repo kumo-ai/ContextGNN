@@ -13,12 +13,14 @@ from hybridgnn.nn.encoder import (
     HeteroTemporalEncoder,
 )
 from hybridgnn.nn.models import HeteroGraphSAGE
-from hybridgnn.nn.models.transformer import RHSTransformer
 from torch_scatter import scatter_max
+from torch_geometric.nn.aggr.utils import MultiheadAttentionBlock
+from torch_geometric.utils import to_dense_batch
 
 
-class Hybrid_RHSTransformer(torch.nn.Module):
-    r"""Implementation of RHSTransformer model.
+
+class ReRankTransformer(torch.nn.Module):
+    r"""Implementation of ReRank Transformer model.
     Args:
         data (HeteroData): dataset
         col_stats_dict (Dict[str, Dict[str, Dict[StatType, Any]]]): column stats
@@ -30,7 +32,7 @@ class Hybrid_RHSTransformer(torch.nn.Module):
         norm (norm): normalization type,
         dropout (float): dropout rate for the transformer float,
         heads (int): number of attention heads,
-        pe (str): type of positional encoding for the transformer,"""
+        rank_topk (int): how many top results of gnn would be reranked,"""
     def __init__(
         self,
         data: HeteroData,
@@ -43,7 +45,7 @@ class Hybrid_RHSTransformer(torch.nn.Module):
         norm: str = 'layer_norm',
         dropout: float = 0.2,
         heads: int = 1,
-        pe: str = "abs",
+        rank_topk: int = 100, 
     ) -> None:
         super().__init__()
 
@@ -82,12 +84,15 @@ class Hybrid_RHSTransformer(torch.nn.Module):
         self.lin_offset_idgnn = torch.nn.Linear(embedding_dim, 1)
         self.lin_offset_embgnn = torch.nn.Linear(embedding_dim, 1)
 
-        self.rhs_transformer = RHSTransformer(in_channels=channels,
-                                              out_channels=channels,
-                                              hidden_channels=channels,
-                                              heads=heads, dropout=dropout,
-                                              position_encoding=pe)
-
+        self.rank_topk = rank_topk
+        self.tr_blocks = torch.nn.ModuleList([
+            MultiheadAttentionBlock(
+                channels=embedding_dim,
+                heads=heads,
+                layer_norm=True,
+                dropout=dropout,
+            ) for _ in range(1)
+        ])
         self.channels = channels
 
         self.reset_parameters()
@@ -102,7 +107,8 @@ class Hybrid_RHSTransformer(torch.nn.Module):
         self.lin_offset_embgnn.reset_parameters()
         self.lin_offset_idgnn.reset_parameters()
         self.lhs_projector.reset_parameters()
-        self.rhs_transformer.reset_parameters()
+        for block in self.tr_blocks:
+            block.reset_parameters()
 
     def forward(
         self,
@@ -111,6 +117,7 @@ class Hybrid_RHSTransformer(torch.nn.Module):
         dst_table: NodeType,
         dst_entity_col: NodeType,
     ) -> Tensor:
+     
         seed_time = batch[entity_table].seed_time
         x_dict = self.encoder(batch.tf_dict)
 
@@ -135,13 +142,6 @@ class Hybrid_RHSTransformer(torch.nn.Module):
         rhs_gnn_embedding = x_dict[dst_table]  # num_sampled_rhs, channel
         rhs_idgnn_index = batch.n_id_dict[dst_table]  # num_sampled_rhs
         lhs_idgnn_batch = batch.batch_dict[dst_table]  # batch_size
-
-        #! need custom code to work for specific datasets
-        # rhs_time = self.get_rhs_time_dict(batch.time_dict, batch.edge_index_dict, batch[entity_table].seed_time, batch, dst_entity_col, dst_table)
-
-        # adding rhs transformer
-        rhs_gnn_embedding = self.rhs_transformer(rhs_gnn_embedding,
-                                                 lhs_idgnn_batch, batch_size=batch_size)
 
         rhs_embedding = self.rhs_embedding  # num_rhs_nodes, channel
         embgnn_logits = lhs_embedding_projected @ rhs_embedding.weight.t(
@@ -169,25 +169,48 @@ class Hybrid_RHSTransformer(torch.nn.Module):
         idgnn_logits = idgnn_logits + idgnn_offset_logits[lhs_idgnn_batch]
 
         embgnn_logits[lhs_idgnn_batch, rhs_idgnn_index] = idgnn_logits
-        return embgnn_logits
 
-    def get_rhs_time_dict(
-        self,
-        time_dict,
-        edge_index_dict,
-        seed_time,
-        batch_dict,
-        dst_entity_col,
-        dst_entity_table,
-    ):
-        #* what to put when transaction table is merged
-        edge_index = edge_index_dict['sponsors','f2p_sponsor_id',
-                                     'sponsors_studies']
-        rhs_time, _ = scatter_max(
-            time_dict['sponsors'][edge_index[0]],
-            edge_index[1])
-        SECONDS_IN_A_DAY = 60 * 60 * 24
-        NANOSECONDS_IN_A_DAY = 60 * 60 * 24 * 1000000000
-        rhs_rel_time = seed_time[batch_dict[dst_entity_col]] - rhs_time
-        rhs_rel_time = rhs_rel_time / NANOSECONDS_IN_A_DAY
-        return rhs_rel_time
+
+
+        """
+        detach the variable
+        """
+        all_rhs_embed = rhs_embedding.weight.detach().clone() #only shallow rhs embeds
+        assert all_rhs_embed.shape[1] == rhs_gnn_embedding.shape[1], "id GNN embed size should be the same as shallow RHS embed size"
+        all_rhs_embed[rhs_idgnn_index] = rhs_gnn_embedding.detach().clone() # apply the idGNN embeddings here
+
+
+        # all_rhs_embed = rhs_embedding.weight #only shallow rhs embeds
+        # #! this causes error when the channel size and hidden size is different
+        # assert all_rhs_embed.shape[1] == rhs_gnn_embedding.shape[1], "id GNN embed size should be the same as shallow RHS embed size"
+        # all_rhs_embed[rhs_idgnn_index] = rhs_gnn_embedding # apply the idGNN embeddings here
+
+
+        transformer_logits, topk_index = self.rerank(embgnn_logits.detach().clone(), all_rhs_embed, lhs_idgnn_batch.detach().clone(), lhs_embedding[lhs_idgnn_batch].detach().clone())
+        # transformer_logits = self.rerank(embgnn_logits, all_rhs_embed, lhs_idgnn_batch, lhs_embedding[lhs_idgnn_batch])
+
+
+
+        # return embgnn_logits, transformer_logits
+        return embgnn_logits, transformer_logits, topk_index
+
+
+    def rerank(self, gnn_logits, rhs_gnn_embedding, index, lhs_embedding):
+        """
+        reranks the gnn logits based on the provided gnn embeddings. 
+        rhs_gnn_embedding:[# rhs nodes, embed_dim]
+        """
+        topk = self.rank_topk
+        _, topk_index = torch.topk(gnn_logits, self.rank_topk, dim=1)
+        embed_size = rhs_gnn_embedding.shape[1]
+
+        # need input batch of size [# nodes, topk, embed_size]
+        top_embed = torch.stack([rhs_gnn_embedding[topk_index[idx]] for idx in range(topk_index.shape[0])])
+        for block in self.tr_blocks:
+            tr_embed = block(top_embed, top_embed) # [# nodes, topk, embed_size]
+
+        #! for top 50 prediction
+        # tr_logits = torch.stack([(lhs_embedding[idx] * tr_embed[idx]).sum(dim=-1).flatten() for idx in range(topk_index.shape[0])])
+        for idx in range(topk_index.shape[0]):
+            gnn_logits[idx][topk_index[idx]] = (lhs_embedding[idx] * tr_embed[idx]).sum(dim=-1).flatten()
+        return gnn_logits, topk_index
