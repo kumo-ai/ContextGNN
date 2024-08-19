@@ -147,7 +147,7 @@ elif args.model in ["rerank_transformer"]:
         "embedding_dim": [64],
         "norm": ["layer_norm"],
         "dropout": [0.0, 0.1, 0.2],
-        "rank_topk": [25,50,100]
+        "rank_topk": [25,50,100, 200]
     }
     train_search_space = {
         "batch_size": [128, 256, 512],
@@ -255,10 +255,17 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
                         task.dst_entity_col).detach()
             scores = torch.sigmoid(out)
         elif args.model in ["rerank_transformer"]:
-            _, out, _ = model(batch, task.src_entity_table,
+            gnn_logits, tr_logits, topk_index = model(batch, task.src_entity_table,
                         task.dst_entity_table, 
                         task.dst_entity_col)
-            scores = torch.sigmoid(out.detach())
+            gnn_logits, tr_logits, topk_index = gnn_logits.detach(), tr_logits.detach(), topk_index.detach()
+            for idx in range(topk_index.shape[0]):
+                gnn_logits[idx][topk_index[idx]] = tr_logits[idx][topk_index[idx]]
+
+            scores = torch.sigmoid(gnn_logits)
+            #scores = torch.sigmoid(out.detach())
+
+            
         else:
             raise ValueError(f"Unsupported model type: {args.model}.")
 

@@ -189,9 +189,6 @@ class ReRankTransformer(torch.nn.Module):
         transformer_logits, topk_index = self.rerank(embgnn_logits.detach().clone(), all_rhs_embed, lhs_idgnn_batch.detach().clone(), lhs_embedding[lhs_idgnn_batch].detach().clone())
         # transformer_logits = self.rerank(embgnn_logits, all_rhs_embed, lhs_idgnn_batch, lhs_embedding[lhs_idgnn_batch])
 
-
-
-        # return embgnn_logits, transformer_logits
         return embgnn_logits, transformer_logits, topk_index
 
 
@@ -210,7 +207,8 @@ class ReRankTransformer(torch.nn.Module):
             tr_embed = block(top_embed, top_embed) # [# nodes, topk, embed_size]
 
         #! for top 50 prediction
+        out_logits = torch.zeros(gnn_logits.shape).to(gnn_logits.device)
         # tr_logits = torch.stack([(lhs_embedding[idx] * tr_embed[idx]).sum(dim=-1).flatten() for idx in range(topk_index.shape[0])])
         for idx in range(topk_index.shape[0]):
-            gnn_logits[idx][topk_index[idx]] = (lhs_embedding[idx] * tr_embed[idx]).sum(dim=-1).flatten()
-        return gnn_logits, topk_index
+            out_logits[idx][topk_index[idx]] = (lhs_embedding[idx] * tr_embed[idx]).sum(dim=-1).flatten()
+        return out_logits, topk_index
