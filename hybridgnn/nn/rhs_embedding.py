@@ -20,7 +20,6 @@ class RHSEmbedding(torch.nn.Module):
         col_names_dict: dict,
         stype_encoder_dict: dict,
         feat: Optional[TensorFrame] = None,
-        init_std: float = 1.0,
     ):
         super().__init__()
         self.emb_mode = emb_mode
@@ -35,25 +34,24 @@ class RHSEmbedding(torch.nn.Module):
                 col_names_dict=col_names_dict,
                 stype_encoder_dict=stype_encoder_dict)
 
-            seqs: List[torch.nn.Module] = []
-            if self.emb_mode in [
-                    RHSEmbeddingMode.FEATURE, RHSEmbeddingMode.FUSION
-            ]:
-                if feat is None:
-                    raise ValueError(f"RHSEmbedding mode {self.emb_mode} "
-                                     f"requires feat data.")
-                self._feat = feat
-                seqs += [
-                    FCResidualBlock(embedding_dim, embedding_dim),
-                    FCResidualBlock(embedding_dim, embedding_dim),
-                ]
+        seqs: List[torch.nn.Module] = []
+        if self.emb_mode in [
+                RHSEmbeddingMode.FEATURE, RHSEmbeddingMode.FUSION
+        ]:
+            if feat is None:
+                raise ValueError(f"RHSEmbedding mode {self.emb_mode} "
+                                 f"requires feat data.")
+            self._feat = feat
+            seqs += [
+                FCResidualBlock(embedding_dim, embedding_dim),
+                FCResidualBlock(embedding_dim, embedding_dim),
+            ]
             seqs += [torch.nn.LayerNorm(embedding_dim, eps=1e-7)]
             self.projector = torch.nn.Sequential(*seqs)
         self.lookup_embedding = None
         if self.emb_mode in [RHSEmbeddingMode.FUSION, RHSEmbeddingMode.LOOKUP]:
             self.lookup_embedding = torch.nn.Embedding(num_nodes,
                                                        embedding_dim)
-        self.init_std = init_std
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -61,21 +59,14 @@ class RHSEmbedding(torch.nn.Module):
             self.lookup_embedding.reset_parameters()
         if self.encoder is not None:
             self.encoder.reset_parameters()
-            for param in self.encoder.parameters():
-                param.data *= self.init_std
         if self.projector is not None:
             for child in self.projector.children():
                 child.reset_parameters()
-                if isinstance(child, torch.nn.LayerNorm):
-                    child.weight.data *= self.init_std
 
-    def forward(self, index: Optional[Tensor] = None) -> Tensor:
+    def forward(self) -> Tensor:
         outs = []
         if self.lookup_embedding is not None:
-            if index is not None:
-                outs.append(self.lookup_embedding(index))
-            else:
-                outs.append(self.lookup_embedding.weight)
+            outs.append(self.lookup_embedding.weight)
         if self.encoder is not None and self.projector is not None:
             assert self._feat is not None
 
@@ -84,4 +75,6 @@ class RHSEmbedding(torch.nn.Module):
             # fuse
             out = torch.sum(out, dim=1)
             outs.append(out)
-        return sum(outs)
+        result = sum(outs)
+        assert isinstance(result, Tensor)
+        return result
