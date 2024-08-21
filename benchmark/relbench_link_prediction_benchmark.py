@@ -1,3 +1,7 @@
+"""
+$ python relbench_link_prediction_benchmark.py --dataset rel-stack --task post-post-related --model rhstransformer --num_trials 10 
+"""
+
 import argparse
 import json
 import os
@@ -30,8 +34,11 @@ from torch_geometric.typing import NodeType
 from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from tqdm import tqdm
 
-from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN
+from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN, RHSTransformer, ReRankTransformer
 from hybridgnn.utils import GloveTextEmbedding
+from torch_geometric.utils.map import map_index
+
+
 
 TRAIN_CONFIG_KEYS = ["batch_size", "gamma_rate", "base_lr"]
 LINK_PREDICTION_METRIC = "link_prediction_map"
@@ -43,7 +50,7 @@ parser.add_argument(
     "--model",
     type=str,
     default="hybridgnn",
-    choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
+    choices=["hybridgnn", "idgnn", "shallowrhsgnn", "rhstransformer", "rerank_transformer"],
 )
 parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--num_trials", type=int, default=10,
@@ -102,7 +109,7 @@ num_neighbors = [
     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
 ]
 
-model_cls: Type[Union[IDGNN, HybridGNN, ShallowRHSGNN]]
+model_cls: Type[Union[IDGNN, HybridGNN, ShallowRHSGNN, RHSTransformer, ReRankTransformer]]
 
 if args.model == "idgnn":
     model_search_space = {
@@ -131,7 +138,38 @@ elif args.model in ["hybridgnn", "shallowrhsgnn"]:
         "gamma_rate": [0.8, 1.],
     }
     model_cls = (HybridGNN if args.model == "hybridgnn" else ShallowRHSGNN)
-
+elif args.model in ["rhstransformer"]:
+    model_search_space = {
+        "encoder_channels": [64, 128],
+        "encoder_layers": [2, 4],
+        "channels": [64, 128],
+        "embedding_dim": [64, 128],
+        "norm": ["layer_norm", "batch_norm"],
+        "dropout": [0.1, 0.2],
+        "t_encoding_type": ["fuse", "absolute"],
+    }
+    train_search_space = {
+        "batch_size": [128, 256],
+        "base_lr": [0.0005, 0.01],
+        "gamma_rate": [0.9, 1.0],
+    }
+    model_cls = RHSTransformer
+elif args.model in ["rerank_transformer"]:
+    model_search_space = {
+        "encoder_channels": [64, 128, 256],
+        "encoder_layers": [2, 4, 8],
+        "channels": [64],
+        "embedding_dim": [64],
+        "norm": ["layer_norm", "batch_norm"],
+        "dropout": [0.1, 0.2],
+        "rank_topk": [100]
+    }
+    train_search_space = {
+        "batch_size": [128, 256, 512],
+        "base_lr": [0.0005, 0.01],
+        "gamma_rate": [0.9, 1.0],
+    }
+    model_cls = ReRankTransformer
 
 def train(
     model: torch.nn.Module,
@@ -173,6 +211,31 @@ def train(
             edge_label_index = torch.stack([src_batch, dst_index], dim=0)
             loss = sparse_cross_entropy(logits, edge_label_index)
             numel = len(batch[task.dst_entity_table].batch)
+        elif args.model in ["rhstransformer"]:
+            logits = model(batch, task.src_entity_table, task.dst_entity_table)
+            edge_label_index = torch.stack([src_batch, dst_index], dim=0)
+            loss = sparse_cross_entropy(logits, edge_label_index)
+            numel = len(batch[task.dst_entity_table].batch)
+        elif args.model in ["rerank_transformer"]:
+            gnn_logits, tr_logits, topk_idx = model(batch, task.src_entity_table, task.dst_entity_table, task.dst_entity_col)
+            edge_label_index = torch.stack([src_batch, dst_index], dim=0)
+            loss = sparse_cross_entropy(gnn_logits, edge_label_index)
+
+            #! continue here to debug for map_index to only get label for the topk that transformer learns
+            """
+            # batch_size = batch[task.src_entity_table].batch_size
+            # target = torch.isin(
+            #     batch[task.dst_entity_table].batch +
+            #     batch_size * batch[task.dst_entity_table].n_id,
+            #     src_batch + batch_size * dst_index,
+            # ).float()
+            # print (target.shape)
+            # quit()
+            # topk_labels = map_index(edge_label_index, topk_idx)
+            """
+            loss += sparse_cross_entropy(tr_logits, edge_label_index)
+            numel = len(batch[task.dst_entity_table].batch)
+
         loss.backward()
 
         optimizer.step()
@@ -214,6 +277,17 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
             out = model(batch, task.src_entity_table,
                         task.dst_entity_table).detach()
             scores = torch.sigmoid(out)
+        elif args.model in ["rhstransformer"]:
+            out = model(batch, task.src_entity_table,
+                        task.dst_entity_table).detach()
+            scores = torch.sigmoid(out)
+        elif args.model in ["rerank_transformer"]:
+            gnn_logits, tr_logits, topk_index = model(batch, task.src_entity_table,
+                        task.dst_entity_table, 
+                        task.dst_entity_col)
+            scores = torch.sigmoid(tr_logits.detach())
+
+            
         else:
             raise ValueError(f"Unsupported model type: {args.model}.")
 
@@ -252,7 +326,7 @@ def train_and_eval_with_cfg(
             persistent_workers=args.num_workers > 0,
         )
 
-    if args.model in ["hybridgnn", "shallowrhsgnn"]:
+    if args.model in ["hybridgnn", "shallowrhsgnn", "rhstransformer", "rerank_transformer"]:
         model_cfg["num_nodes"] = num_dst_nodes_dict["train"]
     elif args.model == "idgnn":
         model_cfg["out_channels"] = 1
