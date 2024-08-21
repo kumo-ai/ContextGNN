@@ -32,6 +32,9 @@ from tqdm import tqdm
 
 from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN, Hybrid_RHSTransformer, ReRankTransformer
 from hybridgnn.utils import GloveTextEmbedding
+from torch_geometric.utils.map import map_index
+
+
 
 TRAIN_CONFIG_KEYS = ["batch_size", "gamma_rate", "base_lr"]
 LINK_PREDICTION_METRIC = "link_prediction_map"
@@ -146,8 +149,8 @@ elif args.model in ["rerank_transformer"]:
         "channels": [64],
         "embedding_dim": [64],
         "norm": ["layer_norm"],
-        "dropout": [0.0, 0.1, 0.2],
-        "rank_topk": [25,50,100, 200]
+        "dropout": [0.1, 0.2],
+        "rank_topk": [100]
     }
     train_search_space = {
         "batch_size": [128, 256, 512],
@@ -205,6 +208,19 @@ def train(
             gnn_logits, tr_logits, topk_idx = model(batch, task.src_entity_table, task.dst_entity_table, task.dst_entity_col)
             edge_label_index = torch.stack([src_batch, dst_index], dim=0)
             loss = sparse_cross_entropy(gnn_logits, edge_label_index)
+
+            #! continue here to debug for map_index to only get label for the topk that transformer learns
+            """
+            # batch_size = batch[task.src_entity_table].batch_size
+            # target = torch.isin(
+            #     batch[task.dst_entity_table].batch +
+            #     batch_size * batch[task.dst_entity_table].n_id,
+            #     src_batch + batch_size * dst_index,
+            # ).float()
+            # print (target.shape)
+            # quit()
+            # topk_labels = map_index(edge_label_index, topk_idx)
+            """
             loss += sparse_cross_entropy(tr_logits, edge_label_index)
             numel = len(batch[task.dst_entity_table].batch)
 
@@ -258,12 +274,7 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
             gnn_logits, tr_logits, topk_index = model(batch, task.src_entity_table,
                         task.dst_entity_table, 
                         task.dst_entity_col)
-            gnn_logits, tr_logits, topk_index = gnn_logits.detach(), tr_logits.detach(), topk_index.detach()
-            for idx in range(topk_index.shape[0]):
-                gnn_logits[idx][topk_index[idx]] = tr_logits[idx][topk_index[idx]]
-
-            scores = torch.sigmoid(gnn_logits)
-            #scores = torch.sigmoid(out.detach())
+            scores = torch.sigmoid(tr_logits.detach())
 
             
         else:
