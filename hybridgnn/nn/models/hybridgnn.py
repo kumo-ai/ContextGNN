@@ -1,8 +1,9 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Type
 
 import torch
 from torch import Tensor
 from torch_frame.data.stats import StatType
+from torch_frame.nn.models import ResNet
 from torch_geometric.data import HeteroData
 from torch_geometric.nn import MLP
 from torch_geometric.typing import NodeType
@@ -27,6 +28,8 @@ class HybridGNN(torch.nn.Module):
         embedding_dim: int,
         aggr: str = 'sum',
         norm: str = 'layer_norm',
+        torch_frame_model_cls: Type[torch.nn.Module] = ResNet,
+        torch_frame_model_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
 
@@ -38,6 +41,8 @@ class HybridGNN(torch.nn.Module):
             },
             node_to_col_stats=col_stats_dict,
             stype_encoder_cls_kwargs=DEFAULT_STYPE_ENCODER_DICT,
+            torch_frame_model_cls=torch_frame_model_cls,
+            torch_frame_model_kwargs=torch_frame_model_kwargs,
         )
         self.temporal_encoder = HeteroTemporalEncoder(
             node_types=[

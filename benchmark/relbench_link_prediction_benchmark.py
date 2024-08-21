@@ -109,25 +109,29 @@ model_cls: Type[Union[IDGNN, HybridGNN, ShallowRHSGNN, Hybrid_RHSTransformer, Re
 
 if args.model == "idgnn":
     model_search_space = {
+        "encoder_channels": [64, 128, 256],
+        "encoder_layers": [2, 4, 8],
         "channels": [64, 128, 256],
         "norm": ["layer_norm", "batch_norm"]
     }
     train_search_space = {
-        "batch_size": [256, 512, 1024],
+        "batch_size": [256, 512],
         "base_lr": [0.0001, 0.01],
         "gamma_rate": [0.9, 0.95, 1.],
     }
     model_cls = IDGNN
 elif args.model in ["hybridgnn", "shallowrhsgnn"]:
     model_search_space = {
-        "channels": [64, 128],
-        "embedding_dim": [64, 128],
+        "encoder_channels": [64, 128, 256],
+        "encoder_layers": [2, 4, 8],
+        "channels": [64, 128, 256],
+        "embedding_dim": [64, 128, 256],
         "norm": ["layer_norm", "batch_norm"]
     }
     train_search_space = {
-        "batch_size": [256],
+        "batch_size": [256, 512],
         "base_lr": [0.001, 0.01],
-        "gamma_rate": [0.9, 0.95, 1.],
+        "gamma_rate": [0.8, 1.],
     }
     model_cls = (HybridGNN if args.model == "hybridgnn" else ShallowRHSGNN)
 elif args.model in ["rhstransformer"]:
@@ -319,9 +323,23 @@ def train_and_eval_with_cfg(
         model_cfg["num_nodes"] = num_dst_nodes_dict["train"]
     elif args.model == "idgnn":
         model_cfg["out_channels"] = 1
+    encoder_model_kwargs = {
+        "channels": model_cfg["encoder_channels"],
+        "num_layers": model_cfg["encoder_layers"],
+    }
+    model_kwargs = {
+        k: v
+        for k, v in model_cfg.items()
+        if k not in ["encoder_channels", "encoder_layers"]
+    }
     # Use model_cfg to set up training procedure
-    model = model_cls(**model_cfg, data=data, col_stats_dict=col_stats_dict,
-                      num_layers=args.num_layers).to(device)
+    model = model_cls(
+        **model_kwargs,
+        data=data,
+        col_stats_dict=col_stats_dict,
+        num_layers=args.num_layers,
+        torch_frame_model_kwargs=encoder_model_kwargs,
+    ).to(device)
     model.reset_parameters()
     # Use train_cfg to set up training procedure
     optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg["base_lr"])
@@ -363,7 +381,7 @@ def objective(trial: optuna.trial.Trial) -> float:
     train_cfg: Dict[str, Any] = {}
     for name, search_list in train_search_space.items():
         assert isinstance(search_list, list)
-        if name != "base_lr":
+        if name == "batch_size":
             train_cfg[name] = trial.suggest_categorical(name, search_list)
         else:
             train_cfg[name] = trial.suggest_loguniform(name, search_list[0],
