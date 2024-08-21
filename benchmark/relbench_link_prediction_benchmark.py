@@ -1,3 +1,7 @@
+"""
+$ python relbench_link_prediction_benchmark.py --dataset rel-stack --task post-post-related --model rhstransformer --num_trials 10 
+"""
+
 import argparse
 import json
 import os
@@ -30,7 +34,7 @@ from torch_geometric.typing import NodeType
 from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from tqdm import tqdm
 
-from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN, Hybrid_RHSTransformer, ReRankTransformer
+from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN, RHSTransformer, ReRankTransformer
 from hybridgnn.utils import GloveTextEmbedding
 from torch_geometric.utils.map import map_index
 
@@ -105,7 +109,7 @@ num_neighbors = [
     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
 ]
 
-model_cls: Type[Union[IDGNN, HybridGNN, ShallowRHSGNN, Hybrid_RHSTransformer, ReRankTransformer]]
+model_cls: Type[Union[IDGNN, HybridGNN, ShallowRHSGNN, RHSTransformer, ReRankTransformer]]
 
 if args.model == "idgnn":
     model_search_space = {
@@ -136,23 +140,27 @@ elif args.model in ["hybridgnn", "shallowrhsgnn"]:
     model_cls = (HybridGNN if args.model == "hybridgnn" else ShallowRHSGNN)
 elif args.model in ["rhstransformer"]:
     model_search_space = {
+        "encoder_channels": [64, 128],
+        "encoder_layers": [2, 4],
         "channels": [64, 128],
         "embedding_dim": [64, 128],
-        "norm": ["layer_norm"],
+        "norm": ["layer_norm", "batch_norm"],
         "dropout": [0.1, 0.2],
-        "pe": [None],
+        "t_encoding_type": ["fuse", "absolute"],
     }
     train_search_space = {
-        "batch_size": [128, 256, 512],
+        "batch_size": [128, 256],
         "base_lr": [0.0005, 0.01],
         "gamma_rate": [0.9, 1.0],
     }
-    model_cls = Hybrid_RHSTransformer
+    model_cls = RHSTransformer
 elif args.model in ["rerank_transformer"]:
     model_search_space = {
+        "encoder_channels": [64, 128, 256],
+        "encoder_layers": [2, 4, 8],
         "channels": [64],
         "embedding_dim": [64],
-        "norm": ["layer_norm"],
+        "norm": ["layer_norm", "batch_norm"],
         "dropout": [0.1, 0.2],
         "rank_topk": [100]
     }
@@ -204,7 +212,7 @@ def train(
             loss = sparse_cross_entropy(logits, edge_label_index)
             numel = len(batch[task.dst_entity_table].batch)
         elif args.model in ["rhstransformer"]:
-            logits = model(batch, task.src_entity_table, task.dst_entity_table, task.dst_entity_col)
+            logits = model(batch, task.src_entity_table, task.dst_entity_table)
             edge_label_index = torch.stack([src_batch, dst_index], dim=0)
             loss = sparse_cross_entropy(logits, edge_label_index)
             numel = len(batch[task.dst_entity_table].batch)
@@ -271,8 +279,7 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
             scores = torch.sigmoid(out)
         elif args.model in ["rhstransformer"]:
             out = model(batch, task.src_entity_table,
-                        task.dst_entity_table, 
-                        task.dst_entity_col).detach()
+                        task.dst_entity_table).detach()
             scores = torch.sigmoid(out)
         elif args.model in ["rerank_transformer"]:
             gnn_logits, tr_logits, topk_index = model(batch, task.src_entity_table,

@@ -95,8 +95,15 @@ class HeteroEncoder(torch.nn.Module):
 
 
 class HeteroTemporalEncoder(torch.nn.Module):
-    def __init__(self, node_types: List[NodeType], channels: int) -> None:
+    def __init__(self, node_types: List[NodeType], channels: int,
+    encoding_type: Optional[str] = "absolute",) -> None:
+        r"""
+        temporal encoder:
+            encoding_type (str, optional): which type of time encoding to use, options are ["absolute", "learnable", "fuse"]
+        """
         super().__init__()
+
+        self.encoding_type = encoding_type # ["absolute", "fuse"]
 
         self.encoder_dict = torch.nn.ModuleDict({
             node_type:
@@ -109,15 +116,19 @@ class HeteroTemporalEncoder(torch.nn.Module):
             for node_type in node_types
         })
 
-        time_dim = 3 # hour, day, week
-        self.time_fuser = torch.nn.Linear(time_dim, channels)
+        if (self.encoding_type == "fuse"):
+            time_dim = 3 # hour, day, week
+            self.time_fuser = torch.nn.Linear(time_dim, channels)
 
     def reset_parameters(self) -> None:
         for encoder in self.encoder_dict.values():
             encoder.reset_parameters()
         for lin in self.lin_dict.values():
             lin.reset_parameters()
-        self.time_fuser.reset_parameters()
+        if (self.encoding_type == "learnable"):
+            self.day_pe.reset_parameters()
+        elif (self.encoding_type == "fuse"):
+            self.time_fuser.reset_parameters()
 
     def forward(
         self,
@@ -129,18 +140,17 @@ class HeteroTemporalEncoder(torch.nn.Module):
 
         for node_type, time in time_dict.items():
             rel_time = seed_time[batch_dict[node_type]] - time
-
-            # rel_day = rel_time / SECONDS_IN_A_DAY
-            # x = self.encoder_dict[node_type](rel_day)
-            # x = self.encoder_dict[node_type](rel_hour)
-            rel_hour = (rel_time // SECONDS_IN_A_HOUR).view(-1,1)
-            rel_day = (rel_time // SECONDS_IN_A_DAY).view(-1,1)
-            rel_week = (rel_time // SECONDS_IN_A_WEEK).view(-1,1)
-            time_embed = torch.cat((rel_hour, rel_day, rel_week),dim=1).float()
-
-            #! might need to normalize hour, day, week into the same scale
-            time_embed = torch.nn.functional.normalize(time_embed, p=2.0, dim=1)
-            x = self.time_fuser(time_embed)
+            
+            if (self.encoding_type == "absolute"):
+                rel_time = rel_time / SECONDS_IN_A_DAY
+                x = self.encoder_dict[node_type](rel_time)
+            elif (self.encoding_type == "fuse"):
+                rel_hour = (rel_time // SECONDS_IN_A_HOUR).view(-1,1)
+                rel_day = (rel_time // SECONDS_IN_A_DAY).view(-1,1)
+                rel_week = (rel_time // SECONDS_IN_A_WEEK).view(-1,1)
+                time_embed = torch.cat((rel_hour, rel_day, rel_week),dim=1).float()
+                time_embed = torch.nn.functional.normalize(time_embed, p=2.0, dim=1) #normalize hour, day, week into same scale
+                x = self.time_fuser(time_embed)
             x = self.lin_dict[node_type](x)
             out_dict[node_type] = x
 

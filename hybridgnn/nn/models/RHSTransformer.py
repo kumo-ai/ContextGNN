@@ -1,8 +1,9 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Type
 
 import torch
 from torch import Tensor
 from torch_frame.data.stats import StatType
+from torch_frame.nn.models import ResNet
 from torch_geometric.data import HeteroData
 from torch_geometric.nn import MLP
 from torch_geometric.typing import NodeType
@@ -13,24 +14,11 @@ from hybridgnn.nn.encoder import (
     HeteroTemporalEncoder,
 )
 from hybridgnn.nn.models import HeteroGraphSAGE
-from hybridgnn.nn.models.transformer import RHSTransformer
-from torch_scatter import scatter_max
+from hybridgnn.nn.models.transformer import Transformer
 
 
-class Hybrid_RHSTransformer(torch.nn.Module):
-    r"""Implementation of RHSTransformer model.
-    Args:
-        data (HeteroData): dataset
-        col_stats_dict (Dict[str, Dict[str, Dict[StatType, Any]]]): column stats
-        num_nodes (int): number of nodes,
-        num_layers (int): number of mp layers,
-        channels (int): input dimension,
-        embedding_dim (int): embedding dimension size,
-        aggr (str): aggregation type,
-        norm (norm): normalization type,
-        dropout (float): dropout rate for the transformer float,
-        heads (int): number of attention heads,
-        pe (str): type of positional encoding for the transformer,"""
+class RHSTransformer(torch.nn.Module):
+    r"""Implementation of RHSTransformer model."""
     def __init__(
         self,
         data: HeteroData,
@@ -43,7 +31,9 @@ class Hybrid_RHSTransformer(torch.nn.Module):
         norm: str = 'layer_norm',
         dropout: float = 0.2,
         heads: int = 1,
-        pe: str = "abs",
+        t_encoding_type: str = "absolute",
+        torch_frame_model_cls: Type[torch.nn.Module] = ResNet,
+        torch_frame_model_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
 
@@ -55,6 +45,8 @@ class Hybrid_RHSTransformer(torch.nn.Module):
             },
             node_to_col_stats=col_stats_dict,
             stype_encoder_cls_kwargs=DEFAULT_STYPE_ENCODER_DICT,
+            torch_frame_model_cls=torch_frame_model_cls,
+            torch_frame_model_kwargs=torch_frame_model_kwargs,
         )
         self.temporal_encoder = HeteroTemporalEncoder(
             node_types=[
@@ -62,6 +54,7 @@ class Hybrid_RHSTransformer(torch.nn.Module):
                 if "time" in data[node_type]
             ],
             channels=channels,
+            encoding_type=t_encoding_type,
         )
         self.gnn = HeteroGraphSAGE(
             node_types=data.node_types,
@@ -81,14 +74,12 @@ class Hybrid_RHSTransformer(torch.nn.Module):
         self.rhs_embedding = torch.nn.Embedding(num_nodes, embedding_dim)
         self.lin_offset_idgnn = torch.nn.Linear(embedding_dim, 1)
         self.lin_offset_embgnn = torch.nn.Linear(embedding_dim, 1)
+        self.channels = channels
 
-        self.rhs_transformer = RHSTransformer(in_channels=channels,
+        self.rhs_transformer = Transformer(in_channels=channels,
                                               out_channels=channels,
                                               hidden_channels=channels,
-                                              heads=heads, dropout=dropout,
-                                              position_encoding=pe)
-
-        self.channels = channels
+                                              heads=heads, dropout=dropout)
 
         self.reset_parameters()
 
@@ -109,7 +100,6 @@ class Hybrid_RHSTransformer(torch.nn.Module):
         batch: HeteroData,
         entity_table: NodeType,
         dst_table: NodeType,
-        dst_entity_col: NodeType,
     ) -> Tensor:
         seed_time = batch[entity_table].seed_time
         x_dict = self.encoder(batch.tf_dict)
@@ -135,15 +125,8 @@ class Hybrid_RHSTransformer(torch.nn.Module):
         rhs_gnn_embedding = x_dict[dst_table]  # num_sampled_rhs, channel
         rhs_idgnn_index = batch.n_id_dict[dst_table]  # num_sampled_rhs
         lhs_idgnn_batch = batch.batch_dict[dst_table]  # batch_size
-
-        #! need custom code to work for specific datasets
-        # rhs_time = self.get_rhs_time_dict(batch.time_dict, batch.edge_index_dict, batch[entity_table].seed_time, batch, dst_entity_col, dst_table)
-
-        # adding rhs transformer
-        rhs_gnn_embedding = self.rhs_transformer(rhs_gnn_embedding,
-                                                 lhs_idgnn_batch, batch_size=batch_size)
-
         rhs_embedding = self.rhs_embedding  # num_rhs_nodes, channel
+
         embgnn_logits = lhs_embedding_projected @ rhs_embedding.weight.t(
         )  # batch_size, num_rhs_nodes
 
@@ -152,6 +135,9 @@ class Hybrid_RHSTransformer(torch.nn.Module):
             lhs_embedding_projected).flatten()
         embgnn_logits += embgnn_offset_logits.view(-1, 1)
 
+        #* transformer forward pass
+        rhs_gnn_embedding = self.rhs_transformer(rhs_gnn_embedding,
+                                                 lhs_idgnn_batch, batch_size=batch_size)
         # Calculate idgnn logits
         idgnn_logits = self.head(
             rhs_gnn_embedding).flatten()  # num_sampled_rhs
@@ -170,24 +156,3 @@ class Hybrid_RHSTransformer(torch.nn.Module):
 
         embgnn_logits[lhs_idgnn_batch, rhs_idgnn_index] = idgnn_logits
         return embgnn_logits
-
-    def get_rhs_time_dict(
-        self,
-        time_dict,
-        edge_index_dict,
-        seed_time,
-        batch_dict,
-        dst_entity_col,
-        dst_entity_table,
-    ):
-        #* what to put when transaction table is merged
-        edge_index = edge_index_dict['sponsors','f2p_sponsor_id',
-                                     'sponsors_studies']
-        rhs_time, _ = scatter_max(
-            time_dict['sponsors'][edge_index[0]],
-            edge_index[1])
-        SECONDS_IN_A_DAY = 60 * 60 * 24
-        NANOSECONDS_IN_A_DAY = 60 * 60 * 24 * 1000000000
-        rhs_rel_time = seed_time[batch_dict[dst_entity_col]] - rhs_time
-        rhs_rel_time = rhs_rel_time / NANOSECONDS_IN_A_DAY
-        return rhs_rel_time

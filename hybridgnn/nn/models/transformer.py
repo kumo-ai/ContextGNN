@@ -10,7 +10,7 @@ from torch_geometric.utils import cumsum, scatter
 from torch_geometric.nn.encoding import PositionalEncoding
 
 
-class RHSTransformer(torch.nn.Module):
+class Transformer(torch.nn.Module):
     r"""A module to attend to rhs embeddings with a transformer. 
     Args:
         in_channels (int): The number of input channels of the RHS embedding.
@@ -29,7 +29,6 @@ class RHSTransformer(torch.nn.Module):
         heads: int = 1,
         num_transformer_blocks: int = 1,
         dropout: float = 0.0,
-        position_encoding: str = "abs",
     ) -> None:
         super().__init__()
 
@@ -38,15 +37,6 @@ class RHSTransformer(torch.nn.Module):
         self.hidden_channels = hidden_channels
         self.lin = torch.nn.Linear(in_channels, hidden_channels)
         self.fc = torch.nn.Linear(hidden_channels, out_channels)
-        self.pe_type = position_encoding
-        self.pe = None
-        if (position_encoding == "abs"):
-            self.pe = PositionalEncoding(hidden_channels)
-        elif (position_encoding is None):
-            self.pe = None
-        else:
-            raise NotImplementedError
-
         self.blocks = torch.nn.ModuleList([
             MultiheadAttentionBlock(
                 channels=hidden_channels,
@@ -68,10 +58,6 @@ class RHSTransformer(torch.nn.Module):
         """
         rhs_embed = self.lin(rhs_embed)
 
-        if (self.pe_type == "abs"):
-            rhs_embed = rhs_embed + self.pe(
-                torch.arange(rhs_embed.size(0), device=rhs_embed.device))
-
         # #! if we sort the index, we need to sort the rhs_embed
         sorted_index, sorted_idx = torch.sort(index, stable=True)
         index = index[sorted_idx]
@@ -91,26 +77,3 @@ class RHSTransformer(torch.nn.Module):
         inv[perm] = torch.arange(perm.size(0), device=perm.device)
         return inv
 
-
-class RotaryPositionalEmbeddings(torch.nn.Module):
-    def __init__(self, channels, base=10000):
-        super().__init__()
-        self.channels = channels
-        self.base = base
-        self.inv_freq = 1. / (base**(torch.arange(0, channels, 2).float() /
-                                     channels))
-
-    def forward(self, x, pos=None):
-        seq_len = x.shape[1]
-        if (pos is None):
-            pos = torch.arange(seq_len, device=x.device).type_as(self.inv_freq)
-        freqs = torch.einsum('i,j->ij', pos, self.inv_freq)
-        emb = torch.cat((freqs, freqs), dim=-1)
-
-        cos = emb.cos().to(x.device)
-        sin = emb.sin().to(x.device)
-
-        x1, x2 = x[..., ::2], x[..., 1::2]
-        rotated = torch.stack([-x2, x1], dim=-1).reshape(x.shape).to(x.device)
-
-        return x * cos + rotated * sin
