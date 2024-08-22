@@ -14,6 +14,8 @@ from hybridgnn.nn.encoder import (
     HeteroTemporalEncoder,
 )
 from hybridgnn.nn.models import HeteroGraphSAGE
+from hybridgnn.nn.rhs_embedding import RHSEmbedding
+from hybridgnn.utils import RHSEmbeddingMode
 
 
 class HybridGNN(torch.nn.Module):
@@ -22,6 +24,8 @@ class HybridGNN(torch.nn.Module):
         self,
         data: HeteroData,
         col_stats_dict: Dict[str, Dict[str, Dict[StatType, Any]]],
+        rhs_emb_mode: RHSEmbeddingMode,
+        dst_entity_table: str,
         num_nodes: int,
         num_layers: int,
         channels: int,
@@ -67,7 +71,20 @@ class HybridGNN(torch.nn.Module):
         self.lhs_projector = torch.nn.Linear(channels, embedding_dim)
 
         self.id_awareness_emb = torch.nn.Embedding(1, channels)
-        self.rhs_embedding = torch.nn.Embedding(num_nodes, embedding_dim)
+        stype_encoder_dict = {
+            k: v[0]()
+            for k, v in DEFAULT_STYPE_ENCODER_DICT.items()
+            if k in data[dst_entity_table]['tf'].col_names_dict.keys()
+        }
+        self.rhs_embedding = RHSEmbedding(
+            emb_mode=rhs_emb_mode,
+            embedding_dim=embedding_dim,
+            num_nodes=num_nodes,
+            col_stats=col_stats_dict[dst_entity_table],
+            col_names_dict=data[dst_entity_table]['tf'].col_names_dict,
+            stype_encoder_dict=stype_encoder_dict,
+            feat=data[dst_entity_table]['tf'],
+        )
         self.lin_offset_idgnn = torch.nn.Linear(embedding_dim, 1)
         self.lin_offset_embgnn = torch.nn.Linear(embedding_dim, 1)
         self.channels = channels
@@ -115,9 +132,9 @@ class HybridGNN(torch.nn.Module):
         rhs_gnn_embedding = x_dict[dst_table]  # num_sampled_rhs, channel
         rhs_idgnn_index = batch.n_id_dict[dst_table]  # num_sampled_rhs
         lhs_idgnn_batch = batch.batch_dict[dst_table]  # batch_size
-        rhs_embedding = self.rhs_embedding  # num_rhs_nodes, channel
+        rhs_embedding = self.rhs_embedding()  # num_rhs_nodes, channel
 
-        embgnn_logits = lhs_embedding_projected @ rhs_embedding.weight.t(
+        embgnn_logits = lhs_embedding_projected @ rhs_embedding.t(
         )  # batch_size, num_rhs_nodes
 
         # Model the importance of embedding-GNN prediction for each lhs node

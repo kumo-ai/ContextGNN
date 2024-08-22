@@ -1,3 +1,4 @@
+import pytest
 from relbench.base.task_base import TaskType
 from relbench.datasets.fake import FakeDataset
 from relbench.modeling.graph import (
@@ -11,6 +12,7 @@ from torch_frame.testing.text_embedder import HashTextEmbedder
 from torch_geometric.loader import NeighborLoader
 
 from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN
+from hybridgnn.utils import RHSEmbeddingMode
 
 
 def test_idgnn(tmp_path):
@@ -64,7 +66,8 @@ def test_idgnn(tmp_path):
     assert len(out) == len(batch[task.dst_entity_table].n_id)
 
 
-def test_hybridgnn(tmp_path):
+@pytest.mark.parametrize('emb_mode', list(RHSEmbeddingMode))
+def test_hybridgnn(tmp_path, emb_mode):
     dataset = FakeDataset()
 
     db = dataset.get_db()
@@ -102,6 +105,8 @@ def test_hybridgnn(tmp_path):
     model = HybridGNN(
         data=data,
         col_stats_dict=col_stats_dict,
+        rhs_emb_mode=emb_mode,
+        dst_entity_table=task.dst_entity_table,
         num_nodes=train_table_input.num_dst_nodes,
         num_layers=2,
         channels=channels,
@@ -121,7 +126,8 @@ def test_hybridgnn(tmp_path):
     assert logits.shape[1] == train_table_input.num_dst_nodes
 
 
-def test_shallowrhsgnn(tmp_path):
+@pytest.mark.parametrize('emb_mode', list(RHSEmbeddingMode))
+def test_shallowrhsgnn(tmp_path, emb_mode):
     dataset = FakeDataset()
 
     db = dataset.get_db()
@@ -159,6 +165,8 @@ def test_shallowrhsgnn(tmp_path):
     model = ShallowRHSGNN(
         data=data,
         col_stats_dict=col_stats_dict,
+        rhs_emb_mode=emb_mode,
+        dst_entity_table=task.dst_entity_table,
         num_nodes=train_table_input.num_dst_nodes,
         num_layers=2,
         channels=channels,

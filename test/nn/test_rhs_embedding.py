@@ -51,3 +51,10 @@ def test_rhs_embedding(tmp_path, emb_mode):
     out = model()
     assert out.shape[0] == train_table_input.num_dst_nodes
     assert out.shape[1] == embedding_dim
+
+    model.eval()
+    model()
+    assert model._cached_rhs_embedding is not None
+    assert model._cached_rhs_embedding.shape[
+        0] == train_table_input.num_dst_nodes
+    assert model._cached_rhs_embedding.shape[1] == embedding_dim

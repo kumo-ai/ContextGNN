@@ -14,6 +14,8 @@ from hybridgnn.nn.encoder import (
     HeteroTemporalEncoder,
 )
 from hybridgnn.nn.models import HeteroGraphSAGE
+from hybridgnn.nn.rhs_embedding import RHSEmbedding
+from hybridgnn.utils import RHSEmbeddingMode
 
 
 class ShallowRHSGNN(torch.nn.Module):
@@ -22,6 +24,8 @@ class ShallowRHSGNN(torch.nn.Module):
         self,
         data: HeteroData,
         col_stats_dict: Dict[str, Dict[str, Dict[StatType, Any]]],
+        rhs_emb_mode: RHSEmbeddingMode,
+        dst_entity_table: str,
         num_nodes: int,
         num_layers: int,
         channels: int,
@@ -65,7 +69,20 @@ class ShallowRHSGNN(torch.nn.Module):
         )
         self.lhs_projector = torch.nn.Linear(channels, embedding_dim)
         self.id_awareness_emb = torch.nn.Embedding(1, channels)
-        self.rhs_embedding = torch.nn.Embedding(num_nodes, embedding_dim)
+        stype_encoder_dict = {
+            k: v[0]()
+            for k, v in DEFAULT_STYPE_ENCODER_DICT.items()
+            if k in data[dst_entity_table]['tf'].col_names_dict.keys()
+        }
+        self.rhs_embedding = RHSEmbedding(
+            emb_mode=rhs_emb_mode,
+            embedding_dim=embedding_dim,
+            num_nodes=num_nodes,
+            col_stats=col_stats_dict[dst_entity_table],
+            col_names_dict=data[dst_entity_table]['tf'].col_names_dict,
+            stype_encoder_dict=stype_encoder_dict,
+            feat=data[dst_entity_table]['tf'],
+        )
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
@@ -102,5 +119,5 @@ class ShallowRHSGNN(torch.nn.Module):
 
         batch_size = seed_time.size(0)
         lhs_emb = self.lhs_projector(x_dict[entity_table][:batch_size])
-        rhs_emb = self.rhs_embedding
-        return lhs_emb @ rhs_emb.weight.t()
+        rhs_emb = self.rhs_embedding()
+        return lhs_emb @ rhs_emb.t()

@@ -1,4 +1,4 @@
-"""Command to run the script:
+"""Example script to run the models in this repository.
 
 python relbench_example.py --dataset rel-trial --task site-sponsor-run
     --model hybridgnn --epochs 10
@@ -33,7 +33,7 @@ from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from tqdm import tqdm
 
 from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN
-from hybridgnn.utils import GloveTextEmbedding
+from hybridgnn.utils import GloveTextEmbedding, RHSEmbeddingMode
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-trial")
@@ -137,6 +137,8 @@ elif args.model == "hybridgnn":
     model = HybridGNN(
         data=data,
         col_stats_dict=col_stats_dict,
+        rhs_emb_mode=RHSEmbeddingMode.FUSION,
+        dst_entity_table=task.dst_entity_table,
         num_nodes=num_dst_nodes_dict["train"],
         num_layers=args.num_layers,
         channels=args.channels,
@@ -152,6 +154,8 @@ elif args.model == 'shallowrhsgnn':
     model = ShallowRHSGNN(
         data=data,
         col_stats_dict=col_stats_dict,
+        rhs_emb_mode=RHSEmbeddingMode.FUSION,
+        dst_entity_table=task.dst_entity_table,
         num_nodes=num_dst_nodes_dict["train"],
         num_layers=args.num_layers,
         channels=args.channels,
