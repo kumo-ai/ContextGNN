@@ -31,7 +31,7 @@ from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from tqdm import tqdm
 
 from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN
-from hybridgnn.utils import GloveTextEmbedding
+from hybridgnn.utils import GloveTextEmbedding, RHSEmbeddingMode
 
 TRAIN_CONFIG_KEYS = ["batch_size", "gamma_rate", "base_lr"]
 LINK_PREDICTION_METRIC = "link_prediction_map"
@@ -123,7 +123,11 @@ elif args.model in ["hybridgnn", "shallowrhsgnn"]:
         "encoder_layers": [2, 4, 8],
         "channels": [64, 128, 256],
         "embedding_dim": [64, 128, 256],
-        "norm": ["layer_norm", "batch_norm"]
+        "norm": ["layer_norm", "batch_norm"],
+        "rhs_emb_mode": [
+            RHSEmbeddingMode.FUSION, RHSEmbeddingMode.FEATURE,
+            RHSEmbeddingMode.LOOKUP
+        ]
     }
     train_search_space = {
         "batch_size": [256, 512],
@@ -254,6 +258,7 @@ def train_and_eval_with_cfg(
 
     if args.model in ["hybridgnn", "shallowrhsgnn"]:
         model_cfg["num_nodes"] = num_dst_nodes_dict["train"]
+        model_cfg["dst_entity_table"] = task.dst_entity_table
     elif args.model == "idgnn":
         model_cfg["out_channels"] = 1
     encoder_model_kwargs = {
