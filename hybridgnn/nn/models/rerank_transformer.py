@@ -189,7 +189,6 @@ class ReRankTransformer(torch.nn.Module):
         """
         reranks the gnn logits based on the provided gnn embeddings. 
         shallow_rhs_embed:[# rhs nodes, embed_dim]
-
         """
         embed_size = rhs_idgnn_embed.shape[1]
         batch_size = gnn_logits.shape[0]

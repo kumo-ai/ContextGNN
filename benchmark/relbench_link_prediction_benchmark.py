@@ -225,20 +225,19 @@ def train(
             loss = sparse_cross_entropy(gnn_logits, edge_label_index)
             numel = len(batch[task.dst_entity_table].batch)
 
-            if (epoch > 0):
-                # num_rhs_nodes = gnn_logits.shape[1]
-                # #* tr_logits: [batch_size, topk], we need to get the edges that exist in the topk prediction, likely incorrect
-                # batch_size = topk_idx.shape[0]
-                # topk = topk_idx.shape[1]
-                # idx_position = (torch.arange(batch_size) * num_rhs_nodes).view(-1,1).to(tr_logits.device)
-                # topk_idx =  topk_idx + idx_position
-                # correct_label = torch.isin(topk_idx,src_batch * num_rhs_nodes + dst_index).float()
+            # num_rhs_nodes = gnn_logits.shape[1]
+            # #* tr_logits: [batch_size, topk], we need to get the edges that exist in the topk prediction, likely incorrect
+            # batch_size = topk_idx.shape[0]
+            # topk = topk_idx.shape[1]
+            # idx_position = (torch.arange(batch_size) * num_rhs_nodes).view(-1,1).to(tr_logits.device)
+            # topk_idx =  topk_idx + idx_position
+            # correct_label = torch.isin(topk_idx,src_batch * num_rhs_nodes + dst_index).float()
 
-                #* approach with map_index
-                label_index, mask = map_index(topk_idx.view(-1), dst_index)
-                true_label = torch.zeros(topk_idx.shape).to(tr_logits.device)
-                true_label[mask.view(true_label.shape)] = 1.0
-                loss += F.binary_cross_entropy_with_logits(tr_logits, true_label.float())
+            #* approach with map_index
+            label_index, mask = map_index(topk_idx.view(-1), dst_index)
+            true_label = torch.zeros(topk_idx.shape).to(tr_logits.device)
+            true_label[mask.view(true_label.shape)] = 1.0
+            loss += F.binary_cross_entropy_with_logits(tr_logits, true_label.float())
                 
         loss.backward()
 
