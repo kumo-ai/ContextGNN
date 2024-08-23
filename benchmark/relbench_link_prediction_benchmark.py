@@ -164,7 +164,7 @@ elif args.model in ["rerank_transformer"]:
         "embedding_dim": [64],
         "norm": ["layer_norm", "batch_norm"],
         "dropout": [0.1, 0.2],
-        "rank_topk": [100]
+        "rank_topk": [500],
     }
     train_search_space = {
         "batch_size": [128, 256, 512],
@@ -178,6 +178,7 @@ def train(
     optimizer: torch.optim.Optimizer,
     loader: NeighborLoader,
     train_sparse_tensor: SparseTensor,
+    epoch:int,
 ) -> float:
     model.train()
 
@@ -222,26 +223,23 @@ def train(
             gnn_logits, tr_logits, topk_idx = model(batch, task.src_entity_table, task.dst_entity_table, task.dst_entity_col)
             edge_label_index = torch.stack([src_batch, dst_index], dim=0)
             loss = sparse_cross_entropy(gnn_logits, edge_label_index)
-            num_rhs_nodes = gnn_logits.shape[1]
-
-            #* tr_logits: [batch_size, topk], we need to get the edges that exist in the topk prediction
-            batch_size = topk_idx.shape[0]
-            topk = topk_idx.shape[1]
-            idx_position = (torch.arange(batch_size) * num_rhs_nodes).view(-1,1).to(tr_logits.device)
-            topk_idx =  topk_idx + idx_position
-
-            """
-            debug if this is correct
-            """
-            correct_label = torch.isin(topk_idx,src_batch * num_rhs_nodes + dst_index).float()
-            loss += F.binary_cross_entropy_with_logits(tr_logits, correct_label)
             numel = len(batch[task.dst_entity_table].batch)
 
+            if (epoch > 0):
+                # num_rhs_nodes = gnn_logits.shape[1]
+                # #* tr_logits: [batch_size, topk], we need to get the edges that exist in the topk prediction, likely incorrect
+                # batch_size = topk_idx.shape[0]
+                # topk = topk_idx.shape[1]
+                # idx_position = (torch.arange(batch_size) * num_rhs_nodes).view(-1,1).to(tr_logits.device)
+                # topk_idx =  topk_idx + idx_position
+                # correct_label = torch.isin(topk_idx,src_batch * num_rhs_nodes + dst_index).float()
 
-            # true_label_index, mask = map_index(topk_idx, edge_label_index)
-            # correct_label = torch.zeros(tr_logits.shape).to(tr_logits.device)
-            # correct_label[mask] = True
-            # loss += sparse_cross_entropy(tr_logits, edge_label_index)
+                #* approach with map_index
+                label_index, mask = map_index(topk_idx.view(-1), dst_index)
+                true_label = torch.zeros(topk_idx.shape).to(tr_logits.device)
+                true_label[mask.view(true_label.shape)] = 1.0
+                loss += F.binary_cross_entropy_with_logits(tr_logits, true_label.float())
+                
         loss.backward()
 
         optimizer.step()
@@ -278,32 +276,40 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
                                  device=out.device)
             scores[batch[task.dst_entity_table].batch,
                    batch[task.dst_entity_table].n_id] = torch.sigmoid(out)
+            _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
         elif args.model in ["hybridgnn", "shallowrhsgnn"]:
             # Get ground-truth
             out = model(batch, task.src_entity_table,
                         task.dst_entity_table).detach()
             scores = torch.sigmoid(out)
+            _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
         elif args.model in ["rhstransformer"]:
             out = model(batch, task.src_entity_table,
                         task.dst_entity_table).detach()
             scores = torch.sigmoid(out)
+            _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
         elif args.model in ["rerank_transformer"]:
             gnn_logits, tr_logits, topk_idx = model(batch, task.src_entity_table,
                         task.dst_entity_table, 
                         task.dst_entity_col)
-            #! need to change the shape of tr_logits
-            scores = torch.zeros(batch_size, task.num_dst_nodes,
-                                 device=tr_logits.device)
-            tr_logits = tr_logits.detach()
-            for i in range(scores.shape[0]):
-                scores[i][topk_idx[i]] = torch.sigmoid(tr_logits[i])
+
+            _, pred_idx = torch.topk(tr_logits.detach(), k=task.eval_k, dim=1)
+            pred_mini = topk_idx[torch.arange(topk_idx.size(0)).unsqueeze(1), pred_idx]
+
+            #! to remove
+            # scores = torch.zeros(batch_size, task.num_dst_nodes,
+            #                      device=tr_logits.device)
+            # tr_logits = tr_logits.detach()
+            # scores.scatter_(1, topk_idx, torch.sigmoid(tr_logits.detach()))
+
+            # for i in range(scores.shape[0]):
+            #     scores[i][topk_idx[i]] = torch.sigmoid(tr_logits[i])
             # scores.scatter_(1, topk_idx, torch.sigmoid(tr_logits.detach()))
             # scores[topk_index] = torch.sigmoid(tr_logits.detach().flatten())
             
         else:
             raise ValueError(f"Unsupported model type: {args.model}.")
 
-        _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
         pred_list.append(pred_mini)
 
     pred = torch.cat(pred_list, dim=0).cpu().numpy()
@@ -371,7 +377,7 @@ def train_and_eval_with_cfg(
         train_sparse_tensor = SparseTensor(dst_nodes_dict["train"][1],
                                            device=device)
         train_loss = train(model, optimizer, loader_dict["train"],
-                           train_sparse_tensor)
+                           train_sparse_tensor, epoch)
         optimizer.zero_grad()
         val_metric = test(model, loader_dict["val"], "val")
 
