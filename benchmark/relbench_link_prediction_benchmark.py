@@ -230,13 +230,18 @@ def train(
             idx_position = (torch.arange(batch_size) * num_rhs_nodes).view(-1,1).to(tr_logits.device)
             topk_idx =  topk_idx + idx_position
 
+            """
+            debug if this is correct
+            """
             correct_label = torch.isin(topk_idx,src_batch * num_rhs_nodes + dst_index).float()
             loss += F.binary_cross_entropy_with_logits(tr_logits, correct_label)
+            numel = len(batch[task.dst_entity_table].batch)
+
+
             # true_label_index, mask = map_index(topk_idx, edge_label_index)
             # correct_label = torch.zeros(tr_logits.shape).to(tr_logits.device)
             # correct_label[mask] = True
             # loss += sparse_cross_entropy(tr_logits, edge_label_index)
-            numel = len(batch[task.dst_entity_table].batch)
         loss.backward()
 
         optimizer.step()
@@ -289,7 +294,10 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
             #! need to change the shape of tr_logits
             scores = torch.zeros(batch_size, task.num_dst_nodes,
                                  device=tr_logits.device)
-            scores.scatter_(1, topk_idx, torch.sigmoid(tr_logits.detach()))
+            tr_logits = tr_logits.detach()
+            for i in range(scores.shape[0]):
+                scores[i][topk_idx[i]] = torch.sigmoid(tr_logits[i])
+            # scores.scatter_(1, topk_idx, torch.sigmoid(tr_logits.detach()))
             # scores[topk_index] = torch.sigmoid(tr_logits.detach().flatten())
             
         else:

@@ -99,7 +99,7 @@ class ReRankTransformer(torch.nn.Module):
                 dropout=dropout,
             ) for _ in range(1)
         ])
-        self.tr_lin = torch.nn.Linear(embedding_dim*2, 1)
+        self.tr_lin = torch.nn.Linear(embedding_dim*2, embedding_dim)
 
         self.channels = channels
 
@@ -196,6 +196,7 @@ class ReRankTransformer(torch.nn.Module):
         num_rhs_nodes = shallow_rhs_embed.shape[0]
         
         filtered_logits, topk_indices = torch.topk(gnn_logits, self.rank_topk, dim=1)
+        out_indices = topk_indices.clone()
         # [batch_size, topk, embed_size]
         seq = shallow_rhs_embed[topk_indices.flatten()].view(batch_size * self.rank_topk, embed_size) 
         rhs_idgnn_index = lhs_idgnn_batch * num_rhs_nodes + rhs_idgnn_index
@@ -223,12 +224,15 @@ class ReRankTransformer(torch.nn.Module):
 
         #! just get the logit directly from transformer
         seq = seq.view(-1,embed_size*2)
-        seq = self.tr_lin(seq)
-        topk_logits = seq.view(batch_size,self.rank_topk)
+        seq = self.tr_lin(seq) # [batch_size, embed_size]
+        seq = seq.view(batch_size * self.rank_topk, embed_size)
+        lhs_uniq_embed = lhs_uniq_embed.reshape(batch_size * self.rank_topk, embed_size)
 
-        _, topk_indices = torch.topk(gnn_logits, self.rank_topk, dim=1)
-        return topk_logits, topk_indices
+        tr_logits = (lhs_uniq_embed.view(-1, embed_size) * seq.view(-1, embed_size)).sum(
+                dim=-1).flatten()
+        tr_logits = tr_logits.view(batch_size,self.rank_topk)
 
+        return tr_logits, out_indices
 
         
 
