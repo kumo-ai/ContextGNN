@@ -1,9 +1,10 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Type
 
 import torch
 from torch import Tensor
 from torch_frame.data.stats import StatType
 from torch_geometric.data import HeteroData
+from torch_frame.nn.models import ResNet
 from torch_geometric.nn import MLP
 from torch_geometric.typing import NodeType
 
@@ -47,6 +48,8 @@ class ReRankTransformer(torch.nn.Module):
         dropout: float = 0.2,
         heads: int = 1,
         rank_topk: int = 100, 
+        torch_frame_model_cls: Type[torch.nn.Module] = ResNet,
+        torch_frame_model_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
 
@@ -58,6 +61,8 @@ class ReRankTransformer(torch.nn.Module):
             },
             node_to_col_stats=col_stats_dict,
             stype_encoder_cls_kwargs=DEFAULT_STYPE_ENCODER_DICT,
+            torch_frame_model_cls=torch_frame_model_cls,
+            torch_frame_model_kwargs=torch_frame_model_kwargs,
         )
         self.temporal_encoder = HeteroTemporalEncoder(
             node_types=[
@@ -88,13 +93,13 @@ class ReRankTransformer(torch.nn.Module):
         self.rank_topk = rank_topk
         self.tr_blocks = torch.nn.ModuleList([
             MultiheadAttentionBlock(
-                channels=embedding_dim,
+                channels=embedding_dim*2,
                 heads=heads,
                 layer_norm=True,
                 dropout=dropout,
             ) for _ in range(1)
         ])
-        # self.tr_lin = torch.nn.Linear(embedding_dim*2, embedding_dim)
+        self.tr_lin = torch.nn.Linear(embedding_dim*2, 1)
 
         self.channels = channels
 
@@ -112,7 +117,7 @@ class ReRankTransformer(torch.nn.Module):
         self.lhs_projector.reset_parameters()
         for block in self.tr_blocks:
             block.reset_parameters()
-        # self.tr_lin.reset_parameters()
+        self.tr_lin.reset_parameters()
 
     def forward(
         self,
@@ -159,6 +164,7 @@ class ReRankTransformer(torch.nn.Module):
         # Calculate idgnn logits
         idgnn_logits = self.head(
             rhs_gnn_embedding).flatten()  # num_sampled_rhs
+        
         # Because we are only doing 2 hop, we are not really sampling info from
         # lhs therefore, we need to incorporate this information using
         # lhs_embedding[lhs_idgnn_batch] * rhs_gnn_embedding
@@ -174,22 +180,60 @@ class ReRankTransformer(torch.nn.Module):
 
         embgnn_logits[lhs_idgnn_batch, rhs_idgnn_index] = idgnn_logits
 
-        #! let's do end to end transformer here 
-        all_rhs_embed = rhs_embedding.weight #only shallow rhs embeds
-        assert all_rhs_embed.shape[1] == rhs_gnn_embedding.shape[1], "id GNN embed size should be the same as shallow RHS embed size"
-
-        #* rhs_gnn_embedding is significantly smaller than rhs_embed and we can't use inplace operation during backprop
-        #* -----> this is not global, can't replace like this
-        copy_tensor = torch.zeros(all_rhs_embed.shape).to(all_rhs_embed.device)
-        copy_tensor[rhs_idgnn_index] = rhs_gnn_embedding
-        final_rhs_embed = all_rhs_embed + copy_tensor
-        # all_rhs_embed[rhs_idgnn_index] = rhs_gnn_embedding # apply the idGNN embeddings here
-
-        # transformer_logits, topk_index = self.rerank(embgnn_logits.detach().clone(), final_rhs_embed, lhs_idgnn_batch.detach().clone(), lhs_embedding[lhs_idgnn_batch].detach().clone())
-        transformer_logits, topk_index = self.rerank(embgnn_logits, final_rhs_embed, lhs_idgnn_batch, lhs_embedding_projected[lhs_idgnn_batch])
-
-
+        shallow_rhs_embed = rhs_embedding.weight
+        transformer_logits, topk_index = self.rerank(embgnn_logits, shallow_rhs_embed, rhs_gnn_embedding, rhs_idgnn_index, idgnn_logits, lhs_idgnn_batch,lhs_embedding_projected[lhs_idgnn_batch])
         return embgnn_logits, transformer_logits, topk_index
+
+
+    def rerank(self, gnn_logits, shallow_rhs_embed, rhs_idgnn_embed, rhs_idgnn_index, idgnn_logits, lhs_idgnn_batch, lhs_embedding):
+        """
+        reranks the gnn logits based on the provided gnn embeddings. 
+        shallow_rhs_embed:[# rhs nodes, embed_dim]
+
+        """
+        embed_size = rhs_idgnn_embed.shape[1]
+        batch_size = gnn_logits.shape[0]
+        num_rhs_nodes = shallow_rhs_embed.shape[0]
+        
+        filtered_logits, topk_indices = torch.topk(gnn_logits, self.rank_topk, dim=1)
+        # [batch_size, topk, embed_size]
+        seq = shallow_rhs_embed[topk_indices.flatten()].view(batch_size * self.rank_topk, embed_size) 
+        rhs_idgnn_index = lhs_idgnn_batch * num_rhs_nodes + rhs_idgnn_index
+
+        query_rhs_idgnn_index, mask = map_index(topk_indices.view(-1), rhs_idgnn_index)
+        id_gnn_seq = torch.zeros(batch_size * self.rank_topk, embed_size)
+        id_gnn_seq[mask] = rhs_idgnn_embed[query_rhs_idgnn_index]
+
+        logit_mask = torch.zeros(batch_size * self.rank_topk, embed_size, dtype=bool)
+        logit_mask[mask] = True
+        seq = torch.where(logit_mask, id_gnn_seq.view(-1,embed_size), seq.view(-1,embed_size))
+
+        unique_lhs_idx = torch.unique(lhs_idgnn_batch)
+        lhs_uniq_embed = lhs_embedding[unique_lhs_idx]
+
+        seq = seq.clone()
+        seq = seq.view(batch_size,self.rank_topk,-1)
+
+        lhs_uniq_embed = lhs_uniq_embed.view(-1,1,embed_size)
+        lhs_uniq_embed = lhs_uniq_embed.expand(-1,seq.shape[1],-1)
+        seq = torch.cat((seq,lhs_uniq_embed), dim=-1)
+
+        for block in self.tr_blocks:
+            seq = block(seq, seq) # [# nodes, topk, embed_size]
+
+        #! just get the logit directly from transformer
+        seq = seq.view(-1,embed_size*2)
+        seq = self.tr_lin(seq)
+        topk_logits = seq.view(batch_size,self.rank_topk)
+
+        _, topk_indices = torch.topk(gnn_logits, self.rank_topk, dim=1)
+        return topk_logits, topk_indices
+
+
+        
+
+
+
 
     #* adding lhs embedding code not working yet
     # def rerank(self, gnn_logits, rhs_gnn_embedding, index, lhs_embedding):
@@ -219,25 +263,3 @@ class ReRankTransformer(torch.nn.Module):
     #     for idx in range(topk_index.shape[0]):
     #         out_logits[idx][topk_index[idx]] = (lhs_embedding[idx] *  tr_embed[idx]).sum(dim=-1).flatten()
     #     return out_logits, topk_index
-
-
-    def rerank(self, gnn_logits, rhs_gnn_embedding, index, lhs_embedding):
-        """
-        reranks the gnn logits based on the provided gnn embeddings. 
-        rhs_gnn_embedding:[# rhs nodes, embed_dim]
-        """
-        topk = self.rank_topk
-        _, topk_index = torch.topk(gnn_logits, self.rank_topk, dim=1)
-        embed_size = rhs_gnn_embedding.shape[1]
-
-        # need input batch of size [# nodes, topk, embed_size]
-        top_embed = torch.stack([rhs_gnn_embedding[topk_index[idx]] for idx in range(topk_index.shape[0])])
-        for block in self.tr_blocks:
-            tr_embed = block(top_embed, top_embed) # [# nodes, topk, embed_size]
-
-        #! for top k prediction
-        out_logits = torch.full(gnn_logits.shape, -float('inf')).to(gnn_logits.device)
-        # tr_logits = torch.stack([(lhs_embedding[idx] * tr_embed[idx]).sum(dim=-1).flatten() for idx in range(topk_index.shape[0])])
-        for idx in range(topk_index.shape[0]):
-            out_logits[idx][topk_index[idx]] = (lhs_embedding[idx] * tr_embed[idx]).sum(dim=-1).flatten()
-        return out_logits, topk_index
