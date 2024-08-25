@@ -164,7 +164,7 @@ elif args.model in ["rerank_transformer"]:
         "embedding_dim": [64],
         "norm": ["layer_norm", "batch_norm"],
         "dropout": [0.1, 0.2],
-        "rank_topk": [500],
+        "rank_topk": [200],
     }
     train_search_space = {
         "batch_size": [128, 256, 512],
@@ -237,6 +237,13 @@ def train(
             label_index, mask = map_index(topk_idx.view(-1), dst_index)
             true_label = torch.zeros(topk_idx.shape).to(tr_logits.device)
             true_label[mask.view(true_label.shape)] = 1.0
+
+            #* empty label rows
+            nonzero_mask = torch.any(true_label, dim=1)
+            tr_logits = tr_logits[nonzero_mask]
+            true_label = true_label[nonzero_mask]
+
+            #* the loss of the transformer should be scaled down? ((topk_idx.shape[1] / gnn_logits.shape[1]))
             loss += F.binary_cross_entropy_with_logits(tr_logits, true_label.float())
                 
         loss.backward()
