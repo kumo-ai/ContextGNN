@@ -34,7 +34,7 @@ from torch_geometric.typing import NodeType
 from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from tqdm import tqdm
 
-from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN, RHSTransformer, ReRankTransformer
+from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN, RHSTransformer
 from hybridgnn.utils import GloveTextEmbedding
 from torch_geometric.utils import index_to_mask
 from torch_geometric.utils.map import map_index
@@ -51,7 +51,7 @@ parser.add_argument(
     "--model",
     type=str,
     default="hybridgnn",
-    choices=["hybridgnn", "idgnn", "shallowrhsgnn", "rhstransformer", "rerank_transformer"],
+    choices=["hybridgnn", "idgnn", "shallowrhsgnn", "rhstransformer"],
 )
 parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--num_trials", type=int, default=10,
@@ -111,7 +111,7 @@ num_neighbors = [
     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
 ]
 
-model_cls: Type[Union[IDGNN, HybridGNN, ShallowRHSGNN, RHSTransformer, ReRankTransformer]]
+model_cls: Type[Union[IDGNN, HybridGNN, ShallowRHSGNN, RHSTransformer]]
 
 if args.model == "idgnn":
     model_search_space = {
@@ -156,22 +156,6 @@ elif args.model in ["rhstransformer"]:
         "gamma_rate": [0.9, 1.0],
     }
     model_cls = RHSTransformer
-elif args.model in ["rerank_transformer"]:
-    model_search_space = {
-        "encoder_channels": [64, 128, 256],
-        "encoder_layers": [2, 4, 8],
-        "channels": [64],
-        "embedding_dim": [64],
-        "norm": ["layer_norm", "batch_norm"],
-        "dropout": [0.1, 0.2],
-        "rank_topk": [100],
-    }
-    train_search_space = {
-        "batch_size": [128, 256, 512],
-        "base_lr": [0.0005, 0.01],
-        "gamma_rate": [0.9, 1.0],
-    }
-    model_cls = ReRankTransformer
 
 def train(
     model: torch.nn.Module,
@@ -219,33 +203,6 @@ def train(
             edge_label_index = torch.stack([src_batch, dst_index], dim=0)
             loss = sparse_cross_entropy(logits, edge_label_index)
             numel = len(batch[task.dst_entity_table].batch)
-        elif args.model in ["rerank_transformer"]:
-            gnn_logits, tr_logits, topk_idx = model(batch, task.src_entity_table, task.dst_entity_table, task.dst_entity_col)
-            edge_label_index = torch.stack([src_batch, dst_index], dim=0)
-            loss = sparse_cross_entropy(gnn_logits, edge_label_index)
-            numel = len(batch[task.dst_entity_table].batch)
-
-            # num_rhs_nodes = gnn_logits.shape[1]
-            # #* tr_logits: [batch_size, topk], we need to get the edges that exist in the topk prediction, likely incorrect
-            # batch_size = topk_idx.shape[0]
-            # topk = topk_idx.shape[1]
-            # idx_position = (torch.arange(batch_size) * num_rhs_nodes).view(-1,1).to(tr_logits.device)
-            # topk_idx =  topk_idx + idx_position
-            # correct_label = torch.isin(topk_idx,src_batch * num_rhs_nodes + dst_index).float()
-            
-            #* approach with map_index
-            label_index, mask = map_index(topk_idx.view(-1), dst_index)
-            true_label = torch.zeros(topk_idx.shape).to(tr_logits.device)
-            true_label[mask.view(true_label.shape)] = 1.0
-
-            # #* empty label rows
-            # nonzero_mask = torch.any(true_label, dim=1)
-            # tr_logits = tr_logits[nonzero_mask]
-            # true_label = true_label[nonzero_mask]
-
-            #* the loss of the transformer should be scaled down? ((topk_idx.shape[1] / gnn_logits.shape[1]))
-            loss += F.binary_cross_entropy_with_logits(tr_logits, true_label.float())
-            
         loss.backward()
 
         optimizer.step()
@@ -294,25 +251,6 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
                         task.dst_entity_table).detach()
             scores = torch.sigmoid(out)
             _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
-        elif args.model in ["rerank_transformer"]:
-            gnn_logits, tr_logits, topk_idx = model(batch, task.src_entity_table,
-                        task.dst_entity_table, 
-                        task.dst_entity_col)
-
-            _, pred_idx = torch.topk(tr_logits.detach(), k=task.eval_k, dim=1)
-            pred_mini = topk_idx[torch.arange(topk_idx.size(0)).unsqueeze(1), pred_idx]
-
-            #! to remove
-            # scores = torch.zeros(batch_size, task.num_dst_nodes,
-            #                      device=tr_logits.device)
-            # tr_logits = tr_logits.detach()
-            # scores.scatter_(1, topk_idx, torch.sigmoid(tr_logits.detach()))
-
-            # for i in range(scores.shape[0]):
-            #     scores[i][topk_idx[i]] = torch.sigmoid(tr_logits[i])
-            # scores.scatter_(1, topk_idx, torch.sigmoid(tr_logits.detach()))
-            # scores[topk_index] = torch.sigmoid(tr_logits.detach().flatten())
-            
         else:
             raise ValueError(f"Unsupported model type: {args.model}.")
 
@@ -350,7 +288,7 @@ def train_and_eval_with_cfg(
             persistent_workers=args.num_workers > 0,
         )
 
-    if args.model in ["hybridgnn", "shallowrhsgnn", "rhstransformer", "rerank_transformer"]:
+    if args.model in ["hybridgnn", "shallowrhsgnn", "rhstransformer"]:
         model_cfg["num_nodes"] = num_dst_nodes_dict["train"]
     elif args.model == "idgnn":
         model_cfg["out_channels"] = 1
