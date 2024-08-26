@@ -208,8 +208,7 @@ class ReRankTransformer(torch.nn.Module):
         logit_mask[mask] = True
         seq = torch.where(logit_mask, id_gnn_seq.view(-1,embed_size), seq.view(-1,embed_size))
 
-        unique_lhs_idx = torch.unique(lhs_idgnn_batch)
-        lhs_uniq_embed = lhs_embedding[unique_lhs_idx]
+        lhs_uniq_embed = lhs_embedding[:batch_size]
 
         seq = seq.clone()
         seq = seq.view(batch_size,self.rank_topk,-1)
