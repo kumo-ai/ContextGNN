@@ -163,8 +163,8 @@ elif args.model in ["rerank_transformer"]:
         "channels": [64],
         "embedding_dim": [64],
         "norm": ["layer_norm", "batch_norm"],
-        "dropout": [0.1, 0.2],
-        "rank_topk": [100],
+        "dropout": [0.0],
+        "rank_topk": [200],
     }
     train_search_space = {
         "batch_size": [128, 256, 512],
@@ -224,14 +224,6 @@ def train(
             edge_label_index = torch.stack([src_batch, dst_index], dim=0)
             loss = sparse_cross_entropy(gnn_logits, edge_label_index)
             numel = len(batch[task.dst_entity_table].batch)
-
-            # num_rhs_nodes = gnn_logits.shape[1]
-            # #* tr_logits: [batch_size, topk], we need to get the edges that exist in the topk prediction, likely incorrect
-            # batch_size = topk_idx.shape[0]
-            # topk = topk_idx.shape[1]
-            # idx_position = (torch.arange(batch_size) * num_rhs_nodes).view(-1,1).to(tr_logits.device)
-            # topk_idx =  topk_idx + idx_position
-            # correct_label = torch.isin(topk_idx,src_batch * num_rhs_nodes + dst_index).float()
             
             #* approach with map_index
             label_index, mask = map_index(topk_idx.view(-1), dst_index)
@@ -239,9 +231,9 @@ def train(
             true_label[mask.view(true_label.shape)] = 1.0
 
             # #* empty label rows
-            # nonzero_mask = torch.any(true_label, dim=1)
-            # tr_logits = tr_logits[nonzero_mask]
-            # true_label = true_label[nonzero_mask]
+            nonzero_mask = torch.any(true_label, dim=1)
+            tr_logits = tr_logits[nonzero_mask]
+            true_label = true_label[nonzero_mask]
 
             #* the loss of the transformer should be scaled down? ((topk_idx.shape[1] / gnn_logits.shape[1]))
             loss += F.binary_cross_entropy_with_logits(tr_logits, true_label.float())
@@ -298,9 +290,21 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
             gnn_logits, tr_logits, topk_idx = model(batch, task.src_entity_table,
                         task.dst_entity_table, 
                         task.dst_entity_col)
-
-            _, pred_idx = torch.topk(tr_logits.detach(), k=task.eval_k, dim=1)
+            
+            _, pred_idx = torch.topk(torch.sigmoid(tr_logits).detach(), k=task.eval_k, dim=1)
             pred_mini = topk_idx[torch.arange(topk_idx.size(0)).unsqueeze(1), pred_idx]
+
+            # _, pred_mini = torch.topk(torch.sigmoid(gnn_logits.detach()), k=task.eval_k, dim=1)
+            # gnn_out = pred_mini[0]
+            # sort_out, _ = torch.sort(gnn_out)
+            # gnn_out = sort_out
+            
+            # tr_out = pred_mini[0]
+            # sort_out, _ = torch.sort(tr_out)
+            # tr_out = sort_out
+
+            # assert torch.equal(gnn_out, tr_out) 
+
 
             #! to remove
             # scores = torch.zeros(batch_size, task.num_dst_nodes,
