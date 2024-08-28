@@ -28,13 +28,13 @@ class ReRankTransformer(torch.nn.Module):
         col_stats_dict (Dict[str, Dict[str, Dict[StatType, Any]]]): column stats
         num_nodes (int): number of nodes,
         num_layers (int): number of mp layers,
-        channels (int): input dimension,
-        embedding_dim (int): embedding dimension size,
+        channels (int): input dimension and embedding dimension
         aggr (str): aggregation type,
         norm (norm): normalization type,
         dropout (float): dropout rate for the transformer float,
         heads (int): number of attention heads,
-        rank_topk (int): how many top results of gnn would be reranked,"""
+        rank_topk (int): how many top results of gnn would be reranked,
+        num_tr_layers (int): number of transformer layers,"""
     def __init__(
         self,
         data: HeteroData,
@@ -42,12 +42,13 @@ class ReRankTransformer(torch.nn.Module):
         num_nodes: int,
         num_layers: int,
         channels: int,
-        embedding_dim: int,
         aggr: str = 'sum',
         norm: str = 'layer_norm',
         dropout: float = 0.2,
         heads: int = 1,
         rank_topk: int = 100, 
+        t_encoding_type: str = "absolute",
+        num_tr_layers: int = 1,
         torch_frame_model_cls: Type[torch.nn.Module] = ResNet,
         torch_frame_model_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
@@ -70,6 +71,7 @@ class ReRankTransformer(torch.nn.Module):
                 if "time" in data[node_type]
             ],
             channels=channels,
+            encoding_type=t_encoding_type,
         )
         self.gnn = HeteroGraphSAGE(
             node_types=data.node_types,
@@ -84,23 +86,24 @@ class ReRankTransformer(torch.nn.Module):
             norm=norm,
             num_layers=1,
         )
-        self.lhs_projector = torch.nn.Linear(channels, embedding_dim)
+        self.lhs_projector = torch.nn.Linear(channels, channels)
         self.id_awareness_emb = torch.nn.Embedding(1, channels)
-        self.rhs_embedding = torch.nn.Embedding(num_nodes, embedding_dim)
-        self.lin_offset_idgnn = torch.nn.Linear(embedding_dim, 1)
-        self.lin_offset_embgnn = torch.nn.Linear(embedding_dim, 1)
+        self.rhs_embedding = torch.nn.Embedding(num_nodes, channels)
+        self.lin_offset_idgnn = torch.nn.Linear(channels, 1)
+        self.lin_offset_embgnn = torch.nn.Linear(channels, 1)
 
         self.rank_topk = rank_topk
+
+        self.tr_embed_size = channels * 2      
         self.tr_blocks = torch.nn.ModuleList([
             MultiheadAttentionBlock(
-                channels=embedding_dim*2,
+                channels=self.tr_embed_size,
                 heads=heads,
                 layer_norm=True,
                 dropout=dropout,
-            ) for _ in range(1)
+            ) for _ in range(num_tr_layers)
         ])
-        # self.tr_lin = torch.nn.Linear(embedding_dim*2, embedding_dim)
-        self.tr_lin = torch.nn.Linear(embedding_dim*2,1)
+        self.tr_lin = torch.nn.Linear(self.tr_embed_size,1)
 
         self.channels = channels
 
@@ -199,19 +202,18 @@ class ReRankTransformer(torch.nn.Module):
         out_indices = topk_indices.clone()
         # [batch_size, topk, embed_size]
         seq = shallow_rhs_embed[topk_indices.flatten()].view(batch_size * self.rank_topk, embed_size) 
-        # rhs_idgnn_index = lhs_idgnn_batch * num_rhs_nodes + rhs_idgnn_index
 
         query_rhs_idgnn_index, mask = map_index(topk_indices.view(-1), rhs_idgnn_index)
-        id_gnn_seq = torch.zeros(batch_size * self.rank_topk, embed_size)
+        id_gnn_seq = torch.zeros(batch_size * self.rank_topk, embed_size).to(rhs_idgnn_embed.device)
         id_gnn_seq[mask] = rhs_idgnn_embed[query_rhs_idgnn_index]
 
-        logit_mask = torch.zeros(batch_size * self.rank_topk, embed_size, dtype=bool)
+        logit_mask = torch.zeros(batch_size * self.rank_topk, embed_size, dtype=bool).to(rhs_idgnn_embed.device)
         logit_mask[mask] = True
         seq = torch.where(logit_mask, id_gnn_seq.view(-1,embed_size), seq.view(-1,embed_size))
 
         lhs_uniq_embed = lhs_embedding[:batch_size]
 
-        seq = seq.clone()
+        # seq = seq.clone()
         seq = seq.view(batch_size,self.rank_topk,-1)
 
         lhs_uniq_embed = lhs_uniq_embed.view(-1,1,embed_size)
@@ -222,15 +224,15 @@ class ReRankTransformer(torch.nn.Module):
             seq = block(seq, seq) # [# nodes, topk, embed_size]
 
         #! just get the logit directly from transformer
-        seq = seq.view(-1,embed_size*2)
+        seq = seq.reshape(-1,self.tr_embed_size)
         tr_logits = self.tr_lin(seq) # [batch_size, embed_size]
+        tr_logits = tr_logits.view(batch_size,self.rank_topk)
+
         # seq = seq.view(batch_size * self.rank_topk, embed_size)
         # lhs_uniq_embed = lhs_uniq_embed.reshape(batch_size * self.rank_topk, embed_size)
 
         # tr_logits = (lhs_uniq_embed.view(-1, embed_size) * seq.view(-1, embed_size)).sum(
         #         dim=-1).flatten()
-
-        tr_logits = tr_logits.view(batch_size,self.rank_topk)
 
         return tr_logits, out_indices
 

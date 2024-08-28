@@ -39,7 +39,7 @@ from hybridgnn.utils import GloveTextEmbedding
 from torch_geometric.utils import index_to_mask
 from torch_geometric.utils.map import map_index
 
-
+PRETRAIN_EPOCH = 1
 
 TRAIN_CONFIG_KEYS = ["batch_size", "gamma_rate", "base_lr"]
 LINK_PREDICTION_METRIC = "link_prediction_map"
@@ -72,8 +72,7 @@ parser.add_argument("--cache_dir", type=str,
 parser.add_argument("--result_path", type=str, default="result")
 args = parser.parse_args()
 
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-device = "cpu"
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if torch.cuda.is_available():
     torch.set_num_threads(1)
 seed_everything(args.seed)
@@ -153,23 +152,24 @@ elif args.model in ["rhstransformer"]:
     train_search_space = {
         "batch_size": [128, 256],
         "base_lr": [0.0005, 0.01],
-        "gamma_rate": [0.9, 1.0],
+        "gamma_rate": [0.8, 1.0],
     }
     model_cls = RHSTransformer
 elif args.model in ["rerank_transformer"]:
     model_search_space = {
         "encoder_channels": [64, 128, 256],
         "encoder_layers": [2, 4, 8],
-        "channels": [64],
-        "embedding_dim": [64],
+        "channels": [64,128,256],
         "norm": ["layer_norm", "batch_norm"],
-        "dropout": [0.0],
-        "rank_topk": [200],
+        "dropout": [0.0,0.1,0.2],
+        "t_encoding_type": ["fuse", "absolute"],
+        "rank_topk": [100,150,200],
+        "num_tr_layers": [1,2,3],
     }
     train_search_space = {
-        "batch_size": [128, 256, 512],
+        "batch_size": [256, 512],
         "base_lr": [0.0005, 0.01],
-        "gamma_rate": [0.9, 1.0],
+        "gamma_rate": [0.8,1.0],
     }
     model_cls = ReRankTransformer
 
@@ -220,23 +220,22 @@ def train(
             loss = sparse_cross_entropy(logits, edge_label_index)
             numel = len(batch[task.dst_entity_table].batch)
         elif args.model in ["rerank_transformer"]:
-            gnn_logits, tr_logits, topk_idx = model(batch, task.src_entity_table, task.dst_entity_table, task.dst_entity_col)
-            edge_label_index = torch.stack([src_batch, dst_index], dim=0)
-            loss = sparse_cross_entropy(gnn_logits, edge_label_index)
             numel = len(batch[task.dst_entity_table].batch)
-            
-            #* approach with map_index
-            label_index, mask = map_index(topk_idx.view(-1), dst_index)
-            true_label = torch.zeros(topk_idx.shape).to(tr_logits.device)
-            true_label[mask.view(true_label.shape)] = 1.0
+            gnn_logits, tr_logits, topk_idx = model(batch, task.src_entity_table, task.dst_entity_table, task.dst_entity_col)
+            if (epoch <= PRETRAIN_EPOCH):
+                edge_label_index = torch.stack([src_batch, dst_index], dim=0)
+                loss = sparse_cross_entropy(gnn_logits, edge_label_index)
+            else:
+                #* approach with map_index
+                label_index, mask = map_index(topk_idx.view(-1), dst_index)
+                true_label = torch.zeros(topk_idx.shape).to(tr_logits.device)
+                true_label[mask.view(true_label.shape)] = 1.0
 
-            # #* empty label rows
-            nonzero_mask = torch.any(true_label, dim=1)
-            tr_logits = tr_logits[nonzero_mask]
-            true_label = true_label[nonzero_mask]
-
-            #* the loss of the transformer should be scaled down? ((topk_idx.shape[1] / gnn_logits.shape[1]))
-            loss += F.binary_cross_entropy_with_logits(tr_logits, true_label.float())
+                # # #* empty label rows
+                # nonzero_mask = torch.any(true_label, dim=1)
+                # tr_logits = tr_logits[nonzero_mask]
+                # true_label = true_label[nonzero_mask]
+                loss = F.binary_cross_entropy_with_logits(tr_logits, true_label.float())
             
         loss.backward()
 
@@ -259,7 +258,7 @@ def train(
 
 
 @torch.no_grad()
-def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
+def test(model: torch.nn.Module, loader: NeighborLoader, stage: str,  epoch:int,) -> float:
     model.eval()
 
     pred_list: List[Tensor] = []
@@ -290,32 +289,13 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
             gnn_logits, tr_logits, topk_idx = model(batch, task.src_entity_table,
                         task.dst_entity_table, 
                         task.dst_entity_col)
-            
-            _, pred_idx = torch.topk(torch.sigmoid(tr_logits).detach(), k=task.eval_k, dim=1)
-            pred_mini = topk_idx[torch.arange(topk_idx.size(0)).unsqueeze(1), pred_idx]
 
-            # _, pred_mini = torch.topk(torch.sigmoid(gnn_logits.detach()), k=task.eval_k, dim=1)
-            # gnn_out = pred_mini[0]
-            # sort_out, _ = torch.sort(gnn_out)
-            # gnn_out = sort_out
-            
-            # tr_out = pred_mini[0]
-            # sort_out, _ = torch.sort(tr_out)
-            # tr_out = sort_out
-
-            # assert torch.equal(gnn_out, tr_out) 
-
-
-            #! to remove
-            # scores = torch.zeros(batch_size, task.num_dst_nodes,
-            #                      device=tr_logits.device)
-            # tr_logits = tr_logits.detach()
-            # scores.scatter_(1, topk_idx, torch.sigmoid(tr_logits.detach()))
-
-            # for i in range(scores.shape[0]):
-            #     scores[i][topk_idx[i]] = torch.sigmoid(tr_logits[i])
-            # scores.scatter_(1, topk_idx, torch.sigmoid(tr_logits.detach()))
-            # scores[topk_index] = torch.sigmoid(tr_logits.detach().flatten())
+            if (epoch <= PRETRAIN_EPOCH):
+                scores = torch.sigmoid(gnn_logits.detach())
+                _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
+            else:
+                _, pred_idx = torch.topk(torch.sigmoid(tr_logits.detach()), k=task.eval_k, dim=1)
+                pred_mini = topk_idx[torch.arange(topk_idx.size(0)).unsqueeze(1), pred_idx]
             
         else:
             raise ValueError(f"Unsupported model type: {args.model}.")
@@ -389,11 +369,11 @@ def train_and_eval_with_cfg(
         train_loss = train(model, optimizer, loader_dict["train"],
                            train_sparse_tensor, epoch)
         optimizer.zero_grad()
-        val_metric = test(model, loader_dict["val"], "val")
+        val_metric = test(model, loader_dict["val"], "val", epoch)
 
         if val_metric > best_val_metric:
             best_val_metric = val_metric
-            best_test_metric = test(model, loader_dict["test"], "test")
+            best_test_metric = test(model, loader_dict["test"], "test", epoch)
 
         lr_scheduler.step()
         print(f"Train Loss: {train_loss:.4f}, Val: {val_metric:.4f}")
