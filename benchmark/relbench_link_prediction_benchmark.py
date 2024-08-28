@@ -125,8 +125,9 @@ elif args.model in ["hybridgnn", "shallowrhsgnn"]:
         "embedding_dim": [64, 128, 256],
         "norm": ["layer_norm", "batch_norm"],
         "rhs_emb_mode": [
-            RHSEmbeddingMode.FUSION, RHSEmbeddingMode.FEATURE,
-            RHSEmbeddingMode.LOOKUP
+            RHSEmbeddingMode.FUSION,
+            RHSEmbeddingMode.FEATURE,
+            RHSEmbeddingMode.LOOKUP,
         ]
     }
     train_search_space = {
@@ -207,22 +208,30 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
         batch_size = batch[task.src_entity_table].batch_size
 
         if args.model == "idgnn":
-            out = (model.forward(batch, task.src_entity_table,
-                                 task.dst_entity_table).detach().flatten())
+            out = model(
+                batch,
+                task.src_entity_table,
+                task.dst_entity_table,
+            ).flatten()
             scores = torch.zeros(batch_size, task.num_dst_nodes,
                                  device=out.device)
             scores[batch[task.dst_entity_table].batch,
                    batch[task.dst_entity_table].n_id] = torch.sigmoid(out)
         elif args.model in ["hybridgnn", "shallowrhsgnn"]:
             # Get ground-truth
-            out = model(batch, task.src_entity_table,
-                        task.dst_entity_table).detach()
+            out = model(
+                batch,
+                task.src_entity_table,
+                task.dst_entity_table,
+            )
             scores = torch.sigmoid(out)
         else:
             raise ValueError(f"Unsupported model type: {args.model}.")
 
         _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
         pred_list.append(pred_mini)
+
+    model.rhs_embedding._cached_rhs_embedding = None
 
     pred = torch.cat(pred_list, dim=0).cpu().numpy()
     res = task.evaluate(pred, task.get_table(stage))
