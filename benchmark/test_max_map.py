@@ -322,14 +322,9 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str,  epoch:int,
             gnn_logits, tr_logits, topk_idx = model(batch, task.src_entity_table,
                         task.dst_entity_table, 
                         task.dst_entity_col)
-
-            if (epoch <= PRETRAIN_EPOCH):
-                scores = torch.sigmoid(gnn_logits.detach())
-                _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
-            else:
-                _, pred_idx = torch.topk(torch.sigmoid(tr_logits.detach()), k=min(task.eval_k, tr_logits.shape[1]), dim=1)
-                pred_mini = topk_idx[torch.arange(topk_idx.size(0)).unsqueeze(1), pred_idx]
-            
+            scores = torch.sigmoid(gnn_logits.detach())
+            _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
+        
         else:
             raise ValueError(f"Unsupported model type: {args.model}.")
 

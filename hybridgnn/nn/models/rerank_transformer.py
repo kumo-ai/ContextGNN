@@ -109,6 +109,10 @@ class ReRankTransformer(torch.nn.Module):
 
         self.reset_parameters()
 
+    # def get_transformer(self) -> list:
+    #     return [self.tr_blocks, self.tr_lin]
+
+
     def reset_parameters(self) -> None:
         self.encoder.reset_parameters()
         self.temporal_encoder.reset_parameters()
@@ -186,11 +190,8 @@ class ReRankTransformer(torch.nn.Module):
 
         shallow_rhs_embed = rhs_embedding.weight
 
-        _, original_indices = torch.topk(embgnn_logits, self.rank_topk, dim=1)
-
         transformer_logits, topk_index = self.rerank(embgnn_logits, shallow_rhs_embed, rhs_gnn_embedding, rhs_idgnn_index, idgnn_logits, lhs_idgnn_batch,lhs_embedding_projected[lhs_idgnn_batch])
 
-        assert torch.equal(original_indices, topk_index)
         return embgnn_logits, transformer_logits, topk_index
 
 

@@ -44,7 +44,7 @@ from relbench.metrics import (
 )
 
 
-PRETRAIN_EPOCH = 1
+PRETRAIN_EPOCH = 6
 
 TRAIN_CONFIG_KEYS = ["batch_size", "gamma_rate", "base_lr"]
 LINK_PREDICTION_METRIC = "link_prediction_map"
@@ -173,7 +173,7 @@ elif args.model in ["rerank_transformer"]:
     }
     train_search_space = {
         "batch_size": [256, 512],
-        "base_lr": [0.0005, 0.01],
+        "base_lr": [0.001,0.002],
         "gamma_rate": [0.8,1.0],
     }
     model_cls = ReRankTransformer
@@ -364,9 +364,21 @@ def train_and_eval_with_cfg(
         torch_frame_model_kwargs=encoder_model_kwargs,
     ).to(device)
     model.reset_parameters()
+
+
+
     # Use train_cfg to set up training procedure
     optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg["base_lr"])
-    lr_scheduler = ExponentialLR(optimizer, gamma=train_cfg["gamma_rate"])
+    # lr_scheduler = ExponentialLR(optimizer, gamma=train_cfg["gamma_rate"])
+
+    # if (args.model == "rerank_transformer"):
+    #     tr_layers, tr_lin = model.get_transformer()
+    # tr_optimizer
+
+
+
+    # tr_optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg["base_lr"])
+    
 
     best_val_metric: float = 0.0
     best_test_metric: float = 0.0
@@ -383,7 +395,7 @@ def train_and_eval_with_cfg(
             best_val_metric = val_metric
             best_test_metric = test(model, loader_dict["test"], "test", epoch)
 
-        lr_scheduler.step()
+        # lr_scheduler.step()
         print(f"Train Loss: {train_loss:.4f}, Val: {val_metric:.4f}")
 
         if trial is not None:
