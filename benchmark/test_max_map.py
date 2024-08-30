@@ -44,7 +44,7 @@ from relbench.metrics import (
 )
 
 
-PRETRAIN_EPOCH = 1
+PRETRAIN_EPOCH = 0
 
 TRAIN_CONFIG_KEYS = ["batch_size", "gamma_rate", "base_lr"]
 LINK_PREDICTION_METRIC = "link_prediction_map"
@@ -162,18 +162,18 @@ elif args.model in ["rhstransformer"]:
     model_cls = RHSTransformer
 elif args.model in ["rerank_transformer"]:
     model_search_space = {
-        "encoder_channels": [64, 128, 256],
-        "encoder_layers": [2, 4, 8],
-        "channels": [64,128],
+        "encoder_channels": [256],
+        "encoder_layers": [8],
+        "channels": [128],
         "norm": ["layer_norm", "batch_norm"],
-        "dropout": [0.0,0.1,0.2],
+        "dropout": [0.1,0.2],
         "t_encoding_type": ["fuse", "absolute"],
-        "rank_topk": [100,150,200],
-        "num_tr_layers": [1,2],
+        "rank_topk": [500],
+        "num_tr_layers": [1],
     }
     train_search_space = {
-        "batch_size": [256, 512],
-        "base_lr": [0.0005, 0.01],
+        "batch_size": [512],
+        "base_lr": [0.001, 0.01],
         "gamma_rate": [0.8,1.0],
     }
     model_cls = ReRankTransformer
@@ -190,6 +190,11 @@ def train(
     loss_accum = count_accum = 0
     steps = 0
     total_steps = min(len(loader), args.max_steps_per_epoch)
+    
+    
+    pred_list = []
+    label_list = []
+
 
     for batch in tqdm(loader, total=total_steps, desc="Train"):
         batch = batch.to(device)
@@ -237,12 +242,30 @@ def train(
                 true_label = torch.zeros(topk_idx.shape).to(tr_logits.device)
                 true_label[mask.view(true_label.shape)] = 1.0
 
+
+                # scores = torch.sigmoid(gnn_logits.detach())
+                # _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
+                # pred_list.append(pred_mini)
+
+
+                #! to remove
+                edge_label_index = torch.stack([src_batch, dst_index], dim=0)
+                loss = sparse_cross_entropy(gnn_logits, edge_label_index)
+                # # loss = F.binary_cross_entropy_with_logits(tr_logits, true_label.float())
+
+                #! test for upper bound of transformer
+                nonzero_mask = torch.any(true_label, dim=1)
+                tr_logits[nonzero_mask] = true_label[nonzero_mask]
+
+                _, pred_idx = torch.topk(tr_logits, k=task.eval_k, dim=1)
+                pred_mini = topk_idx[torch.arange(topk_idx.size(0)).unsqueeze(1), pred_idx]
+                pred_list.append(pred_mini)
+
+
                 # # # #* empty label rows
                 # nonzero_mask = torch.any(true_label, dim=1)
                 # tr_logits = tr_logits[nonzero_mask]
                 # true_label = true_label[nonzero_mask]
-
-                loss = F.binary_cross_entropy_with_logits(tr_logits, true_label.float())
             
         loss.backward()
 
@@ -255,6 +278,12 @@ def train(
         if steps > args.max_steps_per_epoch:
             break
 
+    pred = torch.cat(pred_list, dim=0).cpu().numpy()
+    res = task.evaluate(pred, task.get_table('train'))
+    # label = torch.cat(label_list, dim=0).cpu().numpy()
+    
+    # train_map = link_prediction_map(pred, label)
+    print ("train MAP is", res)
     if count_accum == 0:
         warnings.warn(f"Did not sample a single '{task.dst_entity_table}' "
                       f"node in any mini-batch. Try to increase the number "
@@ -301,7 +330,7 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str,  epoch:int,
                 scores = torch.sigmoid(gnn_logits.detach())
                 _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
             else:
-                _, pred_idx = torch.topk(torch.sigmoid(tr_logits.detach()), k=task.eval_k, dim=1)
+                _, pred_idx = torch.topk(torch.sigmoid(tr_logits.detach()), k=min(task.eval_k, tr_logits.shape[1]), dim=1)
                 pred_mini = topk_idx[torch.arange(topk_idx.size(0)).unsqueeze(1), pred_idx]
             
         else:
@@ -328,6 +357,8 @@ def train_and_eval_with_cfg(
         dst_nodes_dict[split] = table_input.dst_nodes
         num_dst_nodes_dict[split] = table_input.num_dst_nodes
 
+        #! not shuffle for train
+        # split == "train"
         loader_dict[split] = NeighborLoader(
             data,
             num_neighbors=num_neighbors,
@@ -337,7 +368,7 @@ def train_and_eval_with_cfg(
             subgraph_type="bidirectional",
             batch_size=train_cfg["batch_size"],
             temporal_strategy=args.temporal_strategy,
-            shuffle=split == "train",
+            shuffle=False,
             num_workers=args.num_workers,
             persistent_workers=args.num_workers > 0,
         )
