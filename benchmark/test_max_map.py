@@ -45,6 +45,7 @@ from relbench.metrics import (
 
 
 PRETRAIN_EPOCH = 0
+use_gnn_pred = False
 
 TRAIN_CONFIG_KEYS = ["batch_size", "gamma_rate", "base_lr"]
 LINK_PREDICTION_METRIC = "link_prediction_map"
@@ -168,7 +169,7 @@ elif args.model in ["rerank_transformer"]:
         "norm": ["layer_norm", "batch_norm"],
         "dropout": [0.1,0.2],
         "t_encoding_type": ["fuse", "absolute"],
-        "rank_topk": [500],
+        "rank_topk": [100],
         "num_tr_layers": [1],
     }
     train_search_space = {
@@ -242,31 +243,27 @@ def train(
                 true_label = torch.zeros(topk_idx.shape).to(tr_logits.device)
                 true_label[mask.view(true_label.shape)] = 1.0
 
-
-                # scores = torch.sigmoid(gnn_logits.detach())
-                # _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
-                # pred_list.append(pred_mini)
-
-
-                #! to remove
                 edge_label_index = torch.stack([src_batch, dst_index], dim=0)
                 loss = sparse_cross_entropy(gnn_logits, edge_label_index)
+
+                if (use_gnn_pred):
+                    scores = torch.sigmoid(gnn_logits.detach())
+                    _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
+                    pred_list.append(pred_mini)
+                else:
+                    #! test for upper bound of transformer
+                    nonzero_mask = torch.any(true_label, dim=1)
+                    tr_logits[nonzero_mask] = true_label[nonzero_mask]
+
+                    _, pred_idx = torch.topk(torch.sigmoid(tr_logits.detach()), k=task.eval_k, dim=1)
+                    pred_mini = topk_idx[torch.arange(topk_idx.size(0)).unsqueeze(1), pred_idx]
+                    pred_list.append(pred_mini)
+
                 # # loss = F.binary_cross_entropy_with_logits(tr_logits, true_label.float())
 
-                #! test for upper bound of transformer
-                nonzero_mask = torch.any(true_label, dim=1)
-                tr_logits[nonzero_mask] = true_label[nonzero_mask]
-
-                _, pred_idx = torch.topk(tr_logits, k=task.eval_k, dim=1)
-                pred_mini = topk_idx[torch.arange(topk_idx.size(0)).unsqueeze(1), pred_idx]
-                pred_list.append(pred_mini)
+                
 
 
-                # # # #* empty label rows
-                # nonzero_mask = torch.any(true_label, dim=1)
-                # tr_logits = tr_logits[nonzero_mask]
-                # true_label = true_label[nonzero_mask]
-            
         loss.backward()
 
         optimizer.step()
