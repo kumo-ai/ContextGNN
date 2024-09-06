@@ -14,7 +14,7 @@ from hybridgnn.nn.encoder import (
     HeteroTemporalEncoder,
 )
 from hybridgnn.nn.models import HeteroGraphSAGE
-from hybridgnn.nn.models.rhsembeddinggnn import RHSEmbeddingGNN
+from hybridgnn.nn.models import RHSEmbeddingGNN
 from hybridgnn.utils import RHSEmbeddingMode
 
 
