@@ -15,7 +15,6 @@ from hybridgnn.nn.encoder import (
 )
 from hybridgnn.nn.models import HeteroGraphSAGE
 from hybridgnn.nn.models.rhsembeddinggnn import RHSEmbeddingGNN
-from hybridgnn.nn.rhs_embedding import RHSEmbedding
 from hybridgnn.utils import RHSEmbeddingMode
 
 
