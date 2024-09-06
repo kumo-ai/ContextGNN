@@ -14,11 +14,11 @@ from hybridgnn.nn.encoder import (
     HeteroTemporalEncoder,
 )
 from hybridgnn.nn.models import HeteroGraphSAGE
-from hybridgnn.nn.rhs_embedding import RHSEmbedding
+from hybridgnn.nn.rhs_embedding import RHSEmbeddingGNN
 from hybridgnn.utils import RHSEmbeddingMode
 
 
-class ShallowRHSGNN(torch.nn.Module):
+class ShallowRHSGNN(RHSEmbeddingGNN):
     r"""Implementation of ShallowRHSGNN model."""
     def __init__(
         self,
@@ -35,7 +35,8 @@ class ShallowRHSGNN(torch.nn.Module):
         torch_frame_model_cls: Type[torch.nn.Module] = ResNet,
         torch_frame_model_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
-        super().__init__()
+        super().__init__(data, col_stats_dict, rhs_emb_mode,
+                         dst_entity_table, num_nodes, embedding_dim)
         self.encoder = HeteroEncoder(
             channels=channels,
             node_to_col_names_dict={
@@ -69,29 +70,15 @@ class ShallowRHSGNN(torch.nn.Module):
         )
         self.lhs_projector = torch.nn.Linear(channels, embedding_dim)
         self.id_awareness_emb = torch.nn.Embedding(1, channels)
-        stype_encoder_dict = {
-            k: v[0]()
-            for k, v in DEFAULT_STYPE_ENCODER_DICT.items()
-            if k in data[dst_entity_table]['tf'].col_names_dict.keys()
-        }
-        self.rhs_embedding = RHSEmbedding(
-            emb_mode=rhs_emb_mode,
-            embedding_dim=embedding_dim,
-            num_nodes=num_nodes,
-            col_stats=col_stats_dict[dst_entity_table],
-            col_names_dict=data[dst_entity_table]['tf'].col_names_dict,
-            stype_encoder_dict=stype_encoder_dict,
-            feat=data[dst_entity_table]['tf'],
-        )
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
+        super().reset_parameters()
         self.encoder.reset_parameters()
         self.temporal_encoder.reset_parameters()
         self.gnn.reset_parameters()
         self.head.reset_parameters()
         self.id_awareness_emb.reset_parameters()
-        self.rhs_embedding.reset_parameters()
         self.lhs_projector.reset_parameters()
 
     def forward(
