@@ -5,6 +5,7 @@ from torch import Tensor
 from torch_frame import TensorFrame
 from torch_frame.nn import StypeWiseFeatureEncoder
 from torch_frame.nn.models.resnet import FCResidualBlock
+from typing_extensions import Self
 
 from hybridgnn.utils import RHSEmbeddingMode
 
@@ -85,3 +86,17 @@ class RHSEmbedding(torch.nn.Module):
         if not self.training:
             self._cached_rhs_embedding = result
         return result
+
+    def to(self, *args, **kwargs) -> Self:
+        # Explicitly call `to` on the RHS embedding to move caches to the
+        # device.
+        self._feat.to(*args, **kwargs)
+        return super().to(*args, **kwargs)
+
+    def cpu(self) -> Self:
+        self._feat.cpu()
+        return super().cpu()
+
+    def cuda(self, *args, **kwargs) -> Self:
+        self._feat.cuda(*args, **kwargs)
+        return super().cuda(*args, **kwargs)
