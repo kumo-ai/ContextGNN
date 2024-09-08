@@ -14,7 +14,7 @@ from hybridgnn.nn.encoder import (
     HeteroTemporalEncoder,
 )
 from hybridgnn.nn.models import HeteroGraphSAGE
-from hybridgnn.nn.models import RHSEmbeddingGNN
+from hybridgnn.nn.models.rhsembeddinggnn import RHSEmbeddingGNN
 from hybridgnn.utils import RHSEmbeddingMode
 
 
@@ -35,8 +35,8 @@ class HybridGNN(RHSEmbeddingGNN):
         torch_frame_model_cls: Type[torch.nn.Module] = ResNet,
         torch_frame_model_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
-        super().__init__(data, col_stats_dict, rhs_emb_mode,
-                         dst_entity_table, num_nodes, embedding_dim)
+        super().__init__(data, col_stats_dict, rhs_emb_mode, dst_entity_table,
+                         num_nodes, embedding_dim)
 
         self.encoder = HeteroEncoder(
             channels=channels,
