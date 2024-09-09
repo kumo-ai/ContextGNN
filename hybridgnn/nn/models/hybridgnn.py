@@ -7,6 +7,7 @@ from torch_frame.nn.models import ResNet
 from torch_geometric.data import HeteroData
 from torch_geometric.nn import MLP
 from torch_geometric.typing import NodeType
+from typing_extensions import Self
 
 from hybridgnn.nn.encoder import (
     DEFAULT_STYPE_ENCODER_DICT,
@@ -148,3 +149,12 @@ class HybridGNN(RHSEmbeddingGNN):
 
         embgnn_logits[lhs_idgnn_batch, rhs_idgnn_index] = idgnn_logits
         return embgnn_logits
+
+    def to(self, *args, **kwargs) -> Self:
+        return super().to(*args, **kwargs)
+
+    def cpu(self) -> Self:
+        return super().cpu()
+
+    def cuda(self, *args, **kwargs) -> Self:
+        return super().cuda(*args, **kwargs)

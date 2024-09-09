@@ -7,6 +7,7 @@ from torch_frame.nn.models import ResNet
 from torch_geometric.data import HeteroData
 from torch_geometric.nn import MLP
 from torch_geometric.typing import NodeType
+from typing_extensions import Self
 
 from hybridgnn.nn.encoder import (
     DEFAULT_STYPE_ENCODER_DICT,
@@ -108,3 +109,12 @@ class ShallowRHSGNN(RHSEmbeddingGNN):
         lhs_emb = self.lhs_projector(x_dict[entity_table][:batch_size])
         rhs_emb = self.rhs_embedding()
         return lhs_emb @ rhs_emb.t()
+
+    def to(self, *args, **kwargs) -> Self:
+        return super().to(*args, **kwargs)
+
+    def cpu(self) -> Self:
+        return super().cpu()
+
+    def cuda(self, *args, **kwargs) -> Self:
+        return super().cuda(*args, **kwargs)
