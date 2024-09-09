@@ -7,6 +7,7 @@ from torch_frame.nn.models import ResNet
 from torch_geometric.data import HeteroData
 from torch_geometric.nn import MLP
 from torch_geometric.typing import NodeType
+from typing_extensions import Self
 
 from hybridgnn.nn.encoder import (
     DEFAULT_STYPE_ENCODER_DICT,
@@ -14,11 +15,11 @@ from hybridgnn.nn.encoder import (
     HeteroTemporalEncoder,
 )
 from hybridgnn.nn.models import HeteroGraphSAGE
-from hybridgnn.nn.rhs_embedding import RHSEmbedding
+from hybridgnn.nn.models.rhsembeddinggnn import RHSEmbeddingGNN
 from hybridgnn.utils import RHSEmbeddingMode
 
 
-class HybridGNN(torch.nn.Module):
+class HybridGNN(RHSEmbeddingGNN):
     r"""Implementation of HybridGNN model."""
     def __init__(
         self,
@@ -35,7 +36,8 @@ class HybridGNN(torch.nn.Module):
         torch_frame_model_cls: Type[torch.nn.Module] = ResNet,
         torch_frame_model_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
-        super().__init__()
+        super().__init__(data, col_stats_dict, rhs_emb_mode, dst_entity_table,
+                         num_nodes, embedding_dim)
 
         self.encoder = HeteroEncoder(
             channels=channels,
@@ -71,20 +73,6 @@ class HybridGNN(torch.nn.Module):
         self.lhs_projector = torch.nn.Linear(channels, embedding_dim)
 
         self.id_awareness_emb = torch.nn.Embedding(1, channels)
-        stype_encoder_dict = {
-            k: v[0]()
-            for k, v in DEFAULT_STYPE_ENCODER_DICT.items()
-            if k in data[dst_entity_table]['tf'].col_names_dict.keys()
-        }
-        self.rhs_embedding = RHSEmbedding(
-            emb_mode=rhs_emb_mode,
-            embedding_dim=embedding_dim,
-            num_nodes=num_nodes,
-            col_stats=col_stats_dict[dst_entity_table],
-            col_names_dict=data[dst_entity_table]['tf'].col_names_dict,
-            stype_encoder_dict=stype_encoder_dict,
-            feat=data[dst_entity_table]['tf'],
-        )
         self.lin_offset_idgnn = torch.nn.Linear(embedding_dim, 1)
         self.lin_offset_embgnn = torch.nn.Linear(embedding_dim, 1)
         self.channels = channels
@@ -92,6 +80,7 @@ class HybridGNN(torch.nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
+        super().reset_parameters()
         self.encoder.reset_parameters()
         self.temporal_encoder.reset_parameters()
         self.gnn.reset_parameters()
@@ -160,3 +149,12 @@ class HybridGNN(torch.nn.Module):
 
         embgnn_logits[lhs_idgnn_batch, rhs_idgnn_index] = idgnn_logits
         return embgnn_logits
+
+    def to(self, *args, **kwargs) -> Self:
+        return super().to(*args, **kwargs)
+
+    def cpu(self) -> Self:
+        return super().cpu()
+
+    def cuda(self, *args, **kwargs) -> Self:
+        return super().cuda(*args, **kwargs)
