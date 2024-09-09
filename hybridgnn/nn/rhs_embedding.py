@@ -91,15 +91,15 @@ class RHSEmbedding(torch.nn.Module):
         # Explicitly call `to` on the RHS embedding to move caches to the
         # device.
         if self._feat is not None:
-            self._feat.to(*args, **kwargs)
+            self._feat = self._feat.to(*args, **kwargs)
         return super().to(*args, **kwargs)
 
     def cpu(self) -> Self:
         if self._feat is not None:
-            self._feat.cpu()
+            self._feat = self._feat.cpu()
         return super().cpu()
 
     def cuda(self, *args, **kwargs) -> Self:
         if self._feat is not None:
-            self._feat.cuda(*args, **kwargs)
+            self._feat = self._feat.cuda(*args, **kwargs)
         return super().cuda(*args, **kwargs)
