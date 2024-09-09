@@ -27,6 +27,7 @@ class RHSEmbedding(torch.nn.Module):
         # Encodes the column features of a table into a shared embedding space.
         self.encoder: Optional[StypeWiseFeatureEncoder] = None
         self.projector: Optional[torch.nn.Sequential] = None
+        self._feat = feat
         if self.emb_mode in [
                 RHSEmbeddingMode.FEATURE, RHSEmbeddingMode.FUSION
         ]:
@@ -41,7 +42,6 @@ class RHSEmbedding(torch.nn.Module):
             if feat is None:
                 raise ValueError(f"RHSEmbedding mode {self.emb_mode} "
                                  f"requires feat data.")
-            self._feat = feat
             seqs += [
                 FCResidualBlock(embedding_dim, embedding_dim),
                 FCResidualBlock(embedding_dim, embedding_dim),
