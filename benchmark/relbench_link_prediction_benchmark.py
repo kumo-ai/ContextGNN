@@ -123,7 +123,7 @@ elif args.model in ["hybridgnn", "shallowrhsgnn"]:
         "encoder_channels": [64, 128, 256],
         "encoder_layers": [2, 4, 8],
         "channels": [64, 128, 256],
-        "embedding_dim": [64, 128, 246],
+        "embedding_dim": [64, 128, 256],
         "norm": ["layer_norm", "batch_norm"],
         "rhs_emb_mode": [
             RHSEmbeddingMode.FUSION, RHSEmbeddingMode.FEATURE,
