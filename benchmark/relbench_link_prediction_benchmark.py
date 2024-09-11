@@ -107,9 +107,9 @@ model_cls: Type[Union[IDGNN, HybridGNN, ShallowRHSGNN]]
 
 if args.model == "idgnn":
     model_search_space = {
-        "encoder_channels": [64, 128],
-        "encoder_layers": [2, 4],
-        "channels": [64, 128],
+        "encoder_channels": [64, 128, 256],
+        "encoder_layers": [2, 4, 8],
+        "channels": [64, 128, 256],
         "norm": ["layer_norm", "batch_norm"]
     }
     train_search_space = {
@@ -120,10 +120,10 @@ if args.model == "idgnn":
     model_cls = IDGNN
 elif args.model in ["hybridgnn", "shallowrhsgnn"]:
     model_search_space = {
-        "encoder_channels": [64, 128],
-        "encoder_layers": [2, 4],
+        "encoder_channels": [64, 128, 256],
+        "encoder_layers": [2, 4, 8],
         "channels": [64, 128, 256],
-        "embedding_dim": [64, 128],
+        "embedding_dim": [64, 128, 246],
         "norm": ["layer_norm", "batch_norm"],
         "rhs_emb_mode": [
             RHSEmbeddingMode.FUSION, RHSEmbeddingMode.FEATURE,
