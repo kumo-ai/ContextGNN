@@ -43,7 +43,7 @@ parser.add_argument("--task", type=str, default="user-item-rate")
 parser.add_argument(
     "--model",
     type=str,
-    default="shallowrhs",
+    default="hybridgnn",
     choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--epochs", type=int, default=20)
