@@ -21,6 +21,7 @@ from relbench.modeling.loader import SparseTensor
 from relbench.modeling.utils import get_stype_proposal
 from relbench.tasks import get_task
 from torch import Tensor
+from torch.utils.data import DataLoader
 from torch_frame import stype
 from torch_frame.config.text_embedder import TextEmbedderConfig
 from torch_geometric.nn.models import LightGCN
@@ -112,7 +113,7 @@ train_edge_index = train_edge_index.to(device)
 val_edge_index = split_edge_index_dict["val"].to(device)
 val_n_ids = n_id_dict["val"].to(device)
 test_n_ids = n_id_dict["test"].to("cpu")
-train_loader = torch.utils.data.DataLoader(
+train_loader: DataLoader = DataLoader(
     range(train_edge_index.size(1)),
     shuffle=True,
     batch_size=args.batch_size,
