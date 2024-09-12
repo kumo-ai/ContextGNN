@@ -113,8 +113,8 @@ train_edge_index = train_edge_index.to(device)
 val_edge_index = split_edge_index_dict["val"].to(device)
 val_n_ids = n_id_dict["val"].to(device)
 test_n_ids = n_id_dict["test"].to("cpu")
-train_loader: DataLoader = DataLoader(
-    range(train_edge_index.size(1)),  # type: ignore
+train_loader: DataLoader = DataLoader(  # type: ignore[arg-type]
+    range(train_edge_index.size(1)),
     shuffle=True,
     batch_size=args.batch_size,
 )
