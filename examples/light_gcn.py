@@ -183,9 +183,10 @@ def test(
     if stage == "test":
         # For test set we use both train and val edges for message passing
         edge_index = torch.cat([edge_index, val_edge_index], dim=1)
-        edge_weight = torch.cat([edge_weight, split_edge_attr_dict["val"]])
+        edge_weight = torch.cat(
+            [edge_weight, split_edge_attr_dict["val"].to(edge_weight.device)])
         # Remove duplicated edges used for message passing
-        edge_index, edge_weight = coalesce(edge_index, edge_weight=edge_weight,
+        edge_index, edge_weight = coalesce(edge_index, edge_attr=edge_weight,
                                            num_nodes=num_total_nodes)
     emb = model.get_embedding(edge_index, edge_weight=edge_weight)
     src_emb, dst_emb = emb[:num_src_nodes], emb[num_src_nodes:]
