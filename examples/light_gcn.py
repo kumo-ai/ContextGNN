@@ -39,7 +39,6 @@ parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=512)
 parser.add_argument("--channels", type=int, default=32)
-parser.add_argument("--aggr", type=str, default="sum")
 parser.add_argument("--num_layers", type=int, default=2)
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--max_num_train_edges", type=int, default=5000000)
@@ -83,6 +82,7 @@ num_dst_nodes = task.num_dst_nodes
 num_total_nodes = num_src_nodes + num_dst_nodes
 
 split_edge_index_dict: Dict[str, Tensor] = {}
+split_edge_attr_dict: Dict[str, Tensor] = {}
 n_id_dict: Dict[str, Tensor] = {}
 for split in ["train", "val", "test"]:
     table = task.get_table(split)
@@ -100,16 +100,20 @@ for split in ["train", "val", "test"]:
     sparse_tensor = SparseTensor(table_input.dst_nodes[1], device=device)
     src, dst = sparse_tensor[torch.arange(table_input.dst_nodes[1].size(0))]
     edge_index = torch.stack([src, dst])
-    edge_index[:, 1] += num_dst_nodes
+    edge_index[1, :] += num_dst_nodes
     # Remove duplicated edges used for message passing
-    edge_index = coalesce(edge_index, num_nodes=num_total_nodes)
+    edge_attr = torch.ones(edge_index.size(1)).to(edge_index.device)
+    edge_index, edge_attr = coalesce(edge_index, edge_attr=edge_attr,
+                                     num_nodes=num_total_nodes)
     split_edge_index_dict[split] = edge_index
+    split_edge_attr_dict[split] = edge_attr
 
 model = LightGCN(num_total_nodes, embedding_dim=args.channels,
                  num_layers=args.num_layers).to(device)
 
 train_edge_index = split_edge_index_dict["train"][:, :args.max_num_train_edges]
 train_edge_index = train_edge_index.to(device)
+train_edge_weight = split_edge_attr_dict["train"][:args.max_num_train_edges]
 val_edge_index = split_edge_index_dict["val"].to(device)
 val_n_ids = n_id_dict["val"].to(device)
 test_n_ids = n_id_dict["test"].to("cpu")
@@ -141,7 +145,8 @@ def train() -> float:
             neg_edge_label_index,
         ], dim=1)
         optimizer.zero_grad()
-        pos_rank, neg_rank = model(train_edge_index, edge_label_index).chunk(2)
+        pos_rank, neg_rank = model(train_edge_index, edge_label_index,
+                                   edge_weight=train_edge_weight).chunk(2)
         loss = model.recommendation_loss(
             pos_rank,
             neg_rank,
@@ -164,13 +169,16 @@ def test(
     desc: str,
 ) -> np.ndarray:
     model.eval()
-    mp_edge_index = train_edge_index
+    edge_index = train_edge_index
+    edge_weight = train_edge_weight
     if stage == "test":
         # For test set we use both train and val edges for message passing
-        mp_edge_index = torch.cat([mp_edge_index, val_edge_index], dim=1)
+        edge_index = torch.cat([edge_index, val_edge_index], dim=1)
+        edge_weight = torch.cat([edge_weight, split_edge_attr_dict[stage]])
         # Remove duplicated edges used for message passing
-        mp_edge_index = coalesce(mp_edge_index, num_nodes=num_total_nodes)
-    emb = model.get_embedding(mp_edge_index)
+        edge_index, edge_weight = coalesce(edge_index, edge_weight=edge_weight,
+                                           num_nodes=num_total_nodes)
+    emb = model.get_embedding(edge_index, edge_weight=edge_weight)
     src_emb, dst_emb = emb[:num_src_nodes], emb[num_src_nodes:]
     pred_list: List[Tensor] = []
     for start in tqdm(range(0, n_ids.size(0), args.batch_size), desc=desc):
