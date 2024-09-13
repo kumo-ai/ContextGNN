@@ -17,7 +17,6 @@ from relbench.modeling.graph import (
     get_link_train_table_input,
     make_pkey_fkey_graph,
 )
-from relbench.modeling.loader import SparseTensor
 from relbench.modeling.utils import get_stype_proposal
 from relbench.tasks import get_task
 from torch import Tensor
@@ -97,11 +96,20 @@ for split in ["train", "val", "test"]:
     n_id_dict[split] = src_entities
 
     # Get message passing edge_index for each split ###########################
-    sparse_tensor = SparseTensor(table_input.dst_nodes[1], device=device)
-    src, dst = sparse_tensor[torch.arange(table_input.dst_nodes[1].size(0))]
-    edge_index = torch.stack([src, dst])
+    dst_csr = table_input.dst_nodes[1]
+    # Compute counts per row from the CSR matrix
+    counts_per_row = dst_csr.crow_indices()[1:] - dst_csr.crow_indices()[:-1]
+    # Generate row indices for non-zero elements
+    row_indices = torch.repeat_interleave(
+        torch.arange(table_input.src_nodes[1].shape[0]), counts_per_row)
+    # Get source nodes using row indices
+    src = table_input.src_nodes[1][row_indices]
+    # Get destination nodes using column indices
+    dst = torch.arange(num_dst_nodes)[dst_csr.col_indices()]
+    edge_index = torch.stack([src, dst], dim=0)
+    # Convert to bipartite graph
     edge_index[1, :] += num_dst_nodes
-    # Remove duplicated edges used for message passing
+    # Remove duplicated edges but use edge weight for message passing
     edge_attr = torch.ones(edge_index.size(1)).to(edge_index.device)
     edge_index, edge_attr = coalesce(edge_index, edge_attr=edge_attr,
                                      num_nodes=num_total_nodes)
@@ -114,9 +122,10 @@ model = LightGCN(num_total_nodes, embedding_dim=args.channels,
 train_edge_index = split_edge_index_dict["train"][:, :args.max_num_train_edges]
 train_edge_index = train_edge_index.to(device)
 train_edge_weight = split_edge_attr_dict["train"][:args.max_num_train_edges]
+train_edge_weight = train_edge_weight.to(device)
 val_edge_index = split_edge_index_dict["val"].to(device)
 val_n_ids = n_id_dict["val"].to(device)
-test_n_ids = n_id_dict["test"].to("cpu")
+test_n_ids = n_id_dict["test"].to(device)
 train_loader: DataLoader = DataLoader(  # type: ignore[arg-type]
     range(train_edge_index.size(1)),
     shuffle=True,
@@ -174,7 +183,7 @@ def test(
     if stage == "test":
         # For test set we use both train and val edges for message passing
         edge_index = torch.cat([edge_index, val_edge_index], dim=1)
-        edge_weight = torch.cat([edge_weight, split_edge_attr_dict[stage]])
+        edge_weight = torch.cat([edge_weight, split_edge_attr_dict["val"]])
         # Remove duplicated edges used for message passing
         edge_index, edge_weight = coalesce(edge_index, edge_weight=edge_weight,
                                            num_nodes=num_total_nodes)
