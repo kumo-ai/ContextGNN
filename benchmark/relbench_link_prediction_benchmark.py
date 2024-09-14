@@ -35,10 +35,11 @@ from hybridgnn.utils import GloveTextEmbedding, RHSEmbeddingMode
 
 TRAIN_CONFIG_KEYS = ["batch_size", "gamma_rate", "base_lr"]
 LINK_PREDICTION_METRIC = "link_prediction_map"
+VAL_LOSS_DELTA = 0.001
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="rel-stack")
-parser.add_argument("--task", type=str, default="user-post-comment")
+parser.add_argument("--dataset", type=str, default="rel-amazon")
+parser.add_argument("--task", type=str, default="user-item-rate")
 parser.add_argument(
     "--model",
     type=str,
@@ -46,7 +47,7 @@ parser.add_argument(
     choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--epochs", type=int, default=20)
-parser.add_argument("--num_trials", type=int, default=10,
+parser.add_argument("--num_trials", type=int, default=50,
                     help="Number of Optuna-based hyper-parameter tuning.")
 parser.add_argument(
     "--num_repeats", type=int, default=5,
@@ -106,9 +107,9 @@ model_cls: Type[Union[IDGNN, HybridGNN, ShallowRHSGNN]]
 
 if args.model == "idgnn":
     model_search_space = {
-        "encoder_channels": [64, 128],
-        "encoder_layers": [2, 4],
-        "channels": [64, 128],
+        "encoder_channels": [64, 128, 256],
+        "encoder_layers": [2, 4, 8],
+        "channels": [64, 128, 256],
         "norm": ["layer_norm", "batch_norm"]
     }
     train_search_space = {
@@ -119,10 +120,10 @@ if args.model == "idgnn":
     model_cls = IDGNN
 elif args.model in ["hybridgnn", "shallowrhsgnn"]:
     model_search_space = {
-        "encoder_channels": [64, 128],
-        "encoder_layers": [2, 4],
-        "channels": [64, 128, 256],
-        "embedding_dim": [64, 128],
+        "encoder_channels": [32, 64, 128, 256, 512],
+        "encoder_layers": [2, 4, 8],
+        "channels": [32, 64, 128, 256, 512],
+        "embedding_dim": [32, 64, 128, 256, 512],
         "norm": ["layer_norm", "batch_norm"],
         "rhs_emb_mode": [
             RHSEmbeddingMode.FUSION, RHSEmbeddingMode.FEATURE,
@@ -130,7 +131,7 @@ elif args.model in ["hybridgnn", "shallowrhsgnn"]:
         ]
     }
     train_search_space = {
-        "batch_size": [256, 512],
+        "batch_size": [256, 512, 1024],
         "base_lr": [0.001, 0.01],
         "gamma_rate": [0.8, 1.],
     }
@@ -289,8 +290,16 @@ def train_and_eval_with_cfg(
     for epoch in range(1, args.epochs + 1):
         train_sparse_tensor = SparseTensor(dst_nodes_dict["train"][1],
                                            device=device)
-        train_loss = train(model, optimizer, loader_dict["train"],
-                           train_sparse_tensor)
+        try:
+            train_loss = train(model, optimizer, loader_dict["train"],
+                               train_sparse_tensor)
+        except RuntimeError as e:
+            if 'out of memory' in str(e):
+                print("CUDA out of memory error. Clearing cache...")
+                torch.cuda.empty_cache()  # Clear the cache to free up memory
+                return 0.0, 0.0
+            else:
+                raise e
         optimizer.zero_grad()
         val_metric = test(model, loader_dict["val"], "val")
 
@@ -301,6 +310,13 @@ def train_and_eval_with_cfg(
         lr_scheduler.step()
         print(f"Train Loss: {train_loss:.4f}, Val: {val_metric:.4f}")
 
+        # Check if we should early stop
+        if val_metric < best_val_metric - VAL_LOSS_DELTA:
+            print(f"Best val: {best_val_metric:.4f}, "
+                  f"Best test: {best_test_metric:.4f}")
+            return best_val_metric, best_test_metric
+
+        # Check if we should prune the trials
         if trial is not None:
             trial.report(val_metric, epoch)
             if trial.should_prune():
