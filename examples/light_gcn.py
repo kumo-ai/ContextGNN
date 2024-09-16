@@ -111,7 +111,7 @@ for split in ["train", "val", "test"]:
     # Convert to bipartite graph
     edge_index[1, :] += num_dst_nodes
     # Remove duplicated edges but use edge weight for message passing
-    edge_attr = torch.ones(edge_index.size(1)).to(edge_index.device)
+    edge_attr = torch.ones(edge_index.size(1)).to(device)
     edge_index, edge_attr = coalesce(edge_index, edge_attr=edge_attr,
                                      num_nodes=num_total_nodes)
     split_edge_index_dict[split] = edge_index
