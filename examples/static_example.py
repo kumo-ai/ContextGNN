@@ -85,18 +85,18 @@ tune_metric = "link_prediction_map"
 
 # Load user data
 user_path = osp.join(input_data_dir, "user_list.txt")
-lhs_df = pd.read_csv(user_path, delim_whitespace=True)
+src_df = pd.read_csv(user_path, delim_whitespace=True)
 # Drop `org_id` and rename `remap_id` to `user_id`
-lhs_df = lhs_df.drop(columns=['org_id']).rename(
+src_df = src_df.drop(columns=['org_id']).rename(
     columns={'remap_id': SRC_ENTITY_COL})
 
 # Load item data
 item_path = osp.join(input_data_dir, "item_list.txt")
-rhs_df = pd.read_csv(item_path, delim_whitespace=True)
+dst_df = pd.read_csv(item_path, delim_whitespace=True)
 # Drop `org_id` and rename `remap_id` to `item_id`
-rhs_df = rhs_df.drop(columns=['org_id']).rename(
+dst_df = dst_df.drop(columns=['org_id']).rename(
     columns={'remap_id': DST_ENTITY_COL})
-num_dst_nodes = len(rhs_df)
+num_dst_nodes = len(dst_df)
 
 # Load user item link for train data
 train_path = osp.join(input_data_dir, "train.txt")
@@ -143,8 +143,8 @@ test_df_explode = test_df.explode(DST_ENTITY_COL).reset_index(drop=True)
 target_df = pd.concat([train_df_explode, test_df_explode], ignore_index=True)
 
 table_dict = {
-    "user_table": lhs_df,
-    "item_table": rhs_df,
+    "user_table": src_df,
+    "item_table": dst_df,
     "transaction_table": target_df,
 }
 
@@ -177,7 +177,6 @@ def static_data_make_pkey_fkey_graph(
         col_to_stype = {"__const__": stype.numerical}
         fkey_dict = {}
         if table_name == "transaction_table":
-            # col_to_stype = {"__const__": stype.numerical}
             fkey_col_to_pkey_table = {
                 'user_id': 'user_table',
                 'item_id': 'item_table'
