@@ -21,6 +21,7 @@ from relbench.modeling.utils import get_stype_proposal
 from relbench.tasks import get_task
 from torch import Tensor
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from torch_frame import stype
 from torch_frame.config.text_embedder import TextEmbedderConfig
 from torch_geometric.nn.models import LightGCN
@@ -119,10 +120,13 @@ for split in ["train", "val", "test"]:
 model = LightGCN(num_total_nodes, embedding_dim=args.channels,
                  num_layers=args.num_layers).to(device)
 
-train_edge_index = split_edge_index_dict["train"][:, :args.max_num_train_edges]
-train_edge_index = train_edge_index.to(device)
-train_edge_weight = split_edge_attr_dict["train"][:args.max_num_train_edges]
-train_edge_weight = train_edge_weight.to(device)
+train_edge_index = split_edge_index_dict["train"].to(device)
+train_edge_weight = split_edge_attr_dict["train"].to(device)
+num_train_edges = min(args.max_num_train_edges, train_edge_index.size(1))
+perm = torch.randperm(num_train_edges, device=device)
+train_edge_index = train_edge_index[:, perm]
+train_edge_weight = train_edge_weight[perm]
+
 val_edge_index = split_edge_index_dict["val"].to(device)
 val_n_ids = n_id_dict["val"].to(device)
 test_n_ids = n_id_dict["test"].to(device)
@@ -133,6 +137,7 @@ train_loader: DataLoader = DataLoader(  # type: ignore[arg-type]
 )
 
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+writer = SummaryWriter()
 
 
 def train() -> float:
@@ -206,6 +211,8 @@ best_val_metric = 0
 
 for epoch in range(1, args.epochs + 1):
     train_loss = train()
+    writer.add_scalar("Loss/train", float(train_loss), epoch)
+    writer.flush()
     if epoch % args.eval_epochs_interval == 0:
         val_pred = test(
             stage="val",
@@ -217,7 +224,9 @@ for epoch in range(1, args.epochs + 1):
         val_metrics = task.evaluate(val_pred, task.get_table("val"))
         print(f"Epoch: {epoch:02d}, Train loss: {train_loss}, "
               f"Val metrics: {val_metrics}")
-
+        writer.add_scalar(f"{tune_metric}/val",
+                          float(val_metrics[tune_metric]), epoch)
+        writer.flush()
         if val_metrics[tune_metric] > best_val_metric:
             best_val_metric = val_metrics[tune_metric]
             state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
@@ -243,3 +252,4 @@ test_pred = test(
 )
 test_metrics = task.evaluate(test_pred)
 print(f"Best test metrics: {test_metrics}")
+writer.close()
