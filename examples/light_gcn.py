@@ -196,10 +196,10 @@ def test(
     emb = model.get_embedding(edge_index, edge_weight=edge_weight)
     src_emb, dst_emb = emb[:num_src_nodes], emb[num_src_nodes:]
     pred_list: List[Tensor] = []
+    # Make prediction in minibatch
     for start in tqdm(range(0, n_ids.size(0), args.batch_size), desc=desc):
         end = start + args.batch_size
-        n_id = n_ids[start:end]
-        logits = src_emb[n_id] @ dst_emb.t()
+        logits = src_emb[n_ids[start:end]] @ dst_emb.t()
         _, pred_mini = torch.topk(logits, k=task.eval_k, dim=1)
         pred_list.append(pred_mini)
     pred = torch.cat(pred_list, dim=0).cpu().numpy()
