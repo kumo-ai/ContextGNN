@@ -37,11 +37,14 @@ parser.add_argument("--task", type=str, default="site-sponsor-run")
 parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
-parser.add_argument("--batch_size", type=int, default=512)
+parser.add_argument("--batch_size", type=int, default=1024)
 parser.add_argument("--channels", type=int, default=32)
 parser.add_argument("--num_layers", type=int, default=2)
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--max_num_train_edges", type=int, default=5000000)
+parser.add_argument("--lambda_reg", type=float, default=0.0)
+parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
+parser.add_argument("--compute_val_loss", default=False, action="store_true")
 parser.add_argument("--cache_dir", type=str,
                     default=os.path.expanduser("~/.cache/relbench_examples"))
 args = parser.parse_args()
@@ -111,7 +114,7 @@ for split in ["train", "val", "test"]:
     # Convert to bipartite graph
     edge_index[1, :] += num_dst_nodes
     # Remove duplicated edges but use edge weight for message passing
-    edge_attr = torch.ones(edge_index.size(1)).to(device)
+    edge_attr = torch.ones(edge_index.size(1)).to(edge_index.device)
     edge_index, edge_attr = coalesce(edge_index, edge_attr=edge_attr,
                                      num_nodes=num_total_nodes)
     split_edge_index_dict[split] = edge_index
@@ -120,18 +123,20 @@ for split in ["train", "val", "test"]:
 model = LightGCN(num_total_nodes, embedding_dim=args.channels,
                  num_layers=args.num_layers).to(device)
 
-train_edge_index = split_edge_index_dict["train"].to(device)
-train_edge_weight = split_edge_attr_dict["train"].to(device)
-num_train_edges = min(args.max_num_train_edges, train_edge_index.size(1))
-perm = torch.randperm(num_train_edges, device=device)
-train_edge_index = train_edge_index[:, perm]
-train_edge_weight = train_edge_weight[perm]
+train_edge_index = split_edge_index_dict["train"].to("cpu")
+train_edge_weight = split_edge_attr_dict["train"].to("cpu")
+# Shuffle train edges to avoid
+perm = torch.randperm(train_edge_index.size(1), device="cpu")
+train_edge_index = train_edge_index[:, perm][:, :args.max_num_train_edges].to(
+    device)
+train_edge_weight = train_edge_weight[perm][:args.max_num_train_edges].to(
+    device)
 
 val_edge_index = split_edge_index_dict["val"].to(device)
 val_n_ids = n_id_dict["val"].to(device)
 test_n_ids = n_id_dict["test"].to(device)
 train_loader: DataLoader = DataLoader(  # type: ignore[arg-type]
-    range(train_edge_index.size(1)),
+    torch.arange(train_edge_index.size(1)),
     shuffle=True,
     batch_size=args.batch_size,
 )
@@ -143,7 +148,11 @@ writer = SummaryWriter()
 def train() -> float:
     model.train()
     total_loss = total_examples = 0
-    for index in tqdm(train_loader):
+    total_steps = min(args.max_steps_per_epoch, len(train_loader))
+    for i, index in enumerate(
+            tqdm(train_loader, total=total_steps, desc="Train")):
+        if i >= args.max_steps_per_epoch:
+            break
         pos_edge_label_index = train_edge_index[:, index].to(device)
         neg_edge_label_index = torch.stack([
             pos_edge_label_index[0],
@@ -159,16 +168,19 @@ def train() -> float:
             neg_edge_label_index,
         ], dim=1)
         optimizer.zero_grad()
-        pos_rank, neg_rank = model(train_edge_index, edge_label_index,
-                                   edge_weight=train_edge_weight).chunk(2)
+        pos_rank, neg_rank = model(
+            train_edge_index,
+            edge_label_index,
+            edge_weight=train_edge_weight,
+        ).chunk(2)
         loss = model.recommendation_loss(
             pos_rank,
             neg_rank,
             node_id=edge_label_index.unique(),
+            lambda_reg=args.lambda_reg,
         )
         loss.backward()
         optimizer.step()
-
         total_loss += float(loss) * pos_rank.numel()
         total_examples += pos_rank.numel()
     return total_loss / total_examples
@@ -181,6 +193,7 @@ def test(
     val_edge_index: Tensor,
     n_ids: Tensor,
     desc: str,
+    epoch: None | int = None,
 ) -> np.ndarray:
     model.eval()
     edge_index = train_edge_index
@@ -191,8 +204,47 @@ def test(
         edge_weight = torch.cat(
             [edge_weight, split_edge_attr_dict["val"].to(edge_weight.device)])
         # Remove duplicated edges used for message passing
-        edge_index, edge_weight = coalesce(edge_index, edge_attr=edge_weight,
-                                           num_nodes=num_total_nodes)
+        edge_index, edge_weight = coalesce(
+            edge_index,
+            edge_attr=edge_weight,
+            num_nodes=num_total_nodes,
+        )
+    elif args.compute_val_loss and stage == "val":
+        total_loss = total_examples = 0
+        for start in tqdm(range(0, val_edge_index.size(1), args.batch_size),
+                          desc=desc):
+            end = start + args.batch_size
+            pos_edge_label_index = val_edge_index[:, start:end].to(device)
+            neg_edge_label_index = torch.stack([
+                pos_edge_label_index[0],
+                torch.randint(
+                    num_src_nodes,
+                    num_src_nodes + num_dst_nodes,
+                    (pos_edge_label_index.size(1), ),
+                    device=device,
+                )
+            ], dim=0)
+            edge_label_index = torch.cat([
+                pos_edge_label_index,
+                neg_edge_label_index,
+            ], dim=1)
+            pos_rank, neg_rank = model(
+                edge_index,
+                edge_label_index,
+                edge_weight=edge_weight,
+            ).chunk(2)
+            loss = model.recommendation_loss(
+                pos_rank,
+                neg_rank,
+                node_id=edge_label_index.unique(),
+                lambda_reg=args.lambda_reg,
+            )
+            total_loss += float(loss) * pos_rank.numel()
+            total_examples += pos_rank.numel()
+        val_loss = total_loss / total_examples
+        if epoch is not None:
+            writer.add_scalar("Loss/val", float(val_loss), epoch)
+            writer.flush()
     emb = model.get_embedding(edge_index, edge_weight=edge_weight)
     src_emb, dst_emb = emb[:num_src_nodes], emb[num_src_nodes:]
     pred_list: List[Tensor] = []
@@ -220,13 +272,18 @@ for epoch in range(1, args.epochs + 1):
             val_edge_index=val_edge_index,
             n_ids=val_n_ids,
             desc="Val",
+            epoch=epoch,
         )
         val_metrics = task.evaluate(val_pred, task.get_table("val"))
         print(f"Epoch: {epoch:02d}, Train loss: {train_loss}, "
               f"Val metrics: {val_metrics}")
-        writer.add_scalar(f"{tune_metric}/val",
-                          float(val_metrics[tune_metric]), epoch)
-        writer.flush()
+        for metric in val_metrics:
+            writer.add_scalar(
+                f"{metric}/val",
+                float(val_metrics[metric]),
+                epoch,
+            )
+            writer.flush()
         if val_metrics[tune_metric] > best_val_metric:
             best_val_metric = val_metrics[tune_metric]
             state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
