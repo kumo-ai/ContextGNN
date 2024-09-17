@@ -135,11 +135,10 @@ train_edge_weight = train_edge_weight[perm][:args.max_num_train_edges].to(
 val_edge_index = split_edge_index_dict["val"].to(device)
 val_n_ids = n_id_dict["val"].to(device)
 test_n_ids = n_id_dict["test"].to(device)
-train_loader: DataLoader = DataLoader(  # type: ignore[arg-type]
-    torch.arange(train_edge_index.size(1)),
+train_loader: DataLoader = DataLoader(
+    torch.arange(train_edge_index.size(1)),  # type: ignore
     shuffle=True,
-    batch_size=args.batch_size,
-)
+    batch_size=args.batch_size)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 writer = SummaryWriter()
@@ -180,6 +179,8 @@ def train() -> float:
             lambda_reg=args.lambda_reg,
         )
         loss.backward()
+        writer.add_scalar("Step loss/train", float(loss), i)
+        writer.flush()
         optimizer.step()
         total_loss += float(loss) * pos_rank.numel()
         total_examples += pos_rank.numel()
@@ -263,7 +264,7 @@ best_val_metric = 0
 
 for epoch in range(1, args.epochs + 1):
     train_loss = train()
-    writer.add_scalar("Loss/train", float(train_loss), epoch)
+    writer.add_scalar("Total loss/train", float(train_loss), epoch)
     writer.flush()
     if epoch % args.eval_epochs_interval == 0:
         val_pred = test(
