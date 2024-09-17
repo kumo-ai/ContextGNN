@@ -1,6 +1,6 @@
 """Example script to run the models in this repository.
 
-python3 light_gcn.py --dataset rel-hm --task user-item-purchase
+python3 light_gcn.py --dataset rel-hm --task user-item-purchase --val_loss
 """
 
 import argparse
@@ -44,7 +44,7 @@ parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--max_num_train_edges", type=int, default=5000000)
 parser.add_argument("--lambda_reg", type=float, default=0.0)
 parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
-parser.add_argument("--compute_val_loss", default=False, action="store_true")
+parser.add_argument("--val_loss", default=False, action="store_true")
 parser.add_argument("--cache_dir", type=str,
                     default=os.path.expanduser("~/.cache/relbench_examples"))
 args = parser.parse_args()
@@ -211,7 +211,7 @@ def test(
             edge_attr=edge_weight,
             num_nodes=num_total_nodes,
         )
-    elif args.compute_val_loss and stage == "val":
+    elif args.val_loss and stage == "val":
         total_loss = total_examples = 0
         for start in tqdm(range(0, val_edge_index.size(1), args.batch_size),
                           desc=desc):
