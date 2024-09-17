@@ -7,11 +7,12 @@ import argparse
 import os
 import os.path as osp
 import warnings
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Union
 
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as F
 from numpy.typing import NDArray
 from relbench.metrics import (
     link_prediction_map,
@@ -34,7 +35,7 @@ from torch_geometric.utils import sort_edge_index
 from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from tqdm import tqdm
 
-from hybridgnn.nn.models import HybridGNN
+from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN
 from hybridgnn.utils import RHSEmbeddingMode
 
 parser = argparse.ArgumentParser()
@@ -96,7 +97,7 @@ dst_df = pd.read_csv(item_path, delim_whitespace=True)
 # Drop `org_id` and rename `remap_id` to `item_id`
 dst_df = dst_df.drop(columns=['org_id']).rename(
     columns={'remap_id': DST_ENTITY_COL})
-num_dst_nodes = len(dst_df)
+NUM_DST_NODES = len(dst_df)
 
 # Load user item link for train data
 train_path = osp.join(input_data_dir, "train.txt")
@@ -281,7 +282,7 @@ for split in ["train", "test"]:
     elif split == "test":
         table = test_df
     table_input = static_get_link_train_table_input(
-        table, num_dst_nodes=num_dst_nodes)
+        table, num_dst_nodes=NUM_DST_NODES)
     dst_nodes_dict[split] = table_input.dst_nodes
     num_dst_nodes_dict[split] = table_input.num_dst_nodes
     loader_dict[split] = NeighborLoader(
@@ -298,22 +299,76 @@ for split in ["train", "test"]:
         persistent_workers=args.num_workers > 0,
     )
 
-model = HybridGNN(
-    data=data,
-    col_stats_dict=col_stats_dict,
-    rhs_emb_mode=RHSEmbeddingMode.FUSION,
-    dst_entity_table=DST_ENTITY_TABLE,
-    num_nodes=num_dst_nodes_dict["train"],
-    num_layers=args.num_layers,
-    channels=args.channels,
-    aggr="sum",
-    norm="layer_norm",
-    embedding_dim=64,
-    torch_frame_model_kwargs={
-        "channels": 128,
-        "num_layers": 4,
-    },
-).to(device)
+model: Union[IDGNN, HybridGNN, ShallowRHSGNN]
+
+if args.model == "idgnn":
+    model = IDGNN(
+        data=data,
+        col_stats_dict=col_stats_dict,
+        num_layers=args.num_layers,
+        channels=args.channels,
+        out_channels=1,
+        aggr=args.aggr,
+        norm="layer_norm",
+        torch_frame_model_kwargs={
+            "channels": 128,
+            "num_layers": 4,
+        },
+    ).to(device)
+elif args.model == "hybridgnn":
+    model = HybridGNN(
+        data=data,
+        col_stats_dict=col_stats_dict,
+        rhs_emb_mode=RHSEmbeddingMode.FUSION,
+        dst_entity_table=DST_ENTITY_TABLE,
+        num_nodes=num_dst_nodes_dict["train"],
+        num_layers=args.num_layers,
+        channels=args.channels,
+        aggr="sum",
+        norm="layer_norm",
+        embedding_dim=64,
+        torch_frame_model_kwargs={
+            "channels": 128,
+            "num_layers": 4,
+        },
+    ).to(device)
+elif args.model == 'shallowrhsgnn':
+    model = ShallowRHSGNN(
+        data=data,
+        col_stats_dict=col_stats_dict,
+        rhs_emb_mode=RHSEmbeddingMode.FUSION,
+        dst_entity_table=DST_ENTITY_TABLE,
+        num_nodes=num_dst_nodes_dict["train"],
+        num_layers=args.num_layers,
+        channels=args.channels,
+        aggr="sum",
+        norm="layer_norm",
+        embedding_dim=64,
+        torch_frame_model_kwargs={
+            "channels": 128,
+            "num_layers": 4,
+        },
+    ).to(device)
+else:
+    raise ValueError(f"Unsupported model type {args.model}.")
+
+# model = HybridGNN(
+#     data=data,
+#     col_stats_dict=col_stats_dict,
+#     rhs_emb_mode=RHSEmbeddingMode.FUSION,
+#     dst_entity_table=DST_ENTITY_TABLE,
+#     num_nodes=num_dst_nodes_dict["train"],
+#     num_layers=args.num_layers,
+#     channels=args.channels,
+#     aggr="sum",
+#     norm="layer_norm",
+#     embedding_dim=64,
+#     torch_frame_model_kwargs={
+#         "channels": 128,
+#         "num_layers": 4,
+#     },
+# ).to(device)
+
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
 
@@ -333,13 +388,26 @@ def train() -> float:
 
         # Optimization
         optimizer.zero_grad()
+        if args.model == "idgnn":
+            out = model(batch, SRC_ENTITY_TABLE, DST_ENTITY_TABLE).flatten()
+            batch_size = batch[SRC_ENTITY_TABLE].batch_size
 
-        logits = model(batch, SRC_ENTITY_TABLE, DST_ENTITY_TABLE)
-        edge_label_index = torch.stack([src_batch, dst_index], dim=0)
-        loss = sparse_cross_entropy(logits, edge_label_index)
-        numel = len(batch[DST_ENTITY_TABLE].batch)
+            # Get target label
+            target = torch.isin(
+                batch[DST_ENTITY_TABLE].batch +
+                batch_size * batch[DST_ENTITY_TABLE].n_id,
+                src_batch + batch_size * dst_index,
+            ).float()
+
+            loss = F.binary_cross_entropy_with_logits(out, target)
+            numel = out.numel()
+        elif args.model in ['hybridgnn', 'shallowrhsgnn']:
+            logits = model(batch, SRC_ENTITY_TABLE, DST_ENTITY_TABLE)
+            edge_label_index = torch.stack([src_batch, dst_index], dim=0)
+            loss = sparse_cross_entropy(logits, edge_label_index)
+            numel = len(batch[DST_ENTITY_TABLE].batch)
+
         loss.backward()
-
         optimizer.step()
         loss_accum += float(loss) * numel
         count_accum += numel
@@ -361,8 +429,19 @@ def test(loader: NeighborLoader, desc: str) -> np.ndarray:
     pred_list: List[Tensor] = []
     for batch in tqdm(loader, desc=desc):
         batch = batch.to(device)
-        out = model(batch, SRC_ENTITY_TABLE, DST_ENTITY_TABLE).detach()
-        scores = torch.sigmoid(out)
+        batch_size = batch[SRC_ENTITY_TABLE].batch_size
+
+        if args.model == "idgnn":
+            out = (model.forward(batch, SRC_ENTITY_TABLE,
+                                 DST_ENTITY_TABLE).detach().flatten())
+            scores = torch.zeros(batch_size, NUM_DST_NODES, device=out.device)
+            scores[batch[DST_ENTITY_TABLE].batch,
+                   batch[DST_ENTITY_TABLE].n_id] = torch.sigmoid(out)
+        elif args.model in ['hybridgnn', 'shallowrhsgnn']:
+            out = model(batch, SRC_ENTITY_TABLE, DST_ENTITY_TABLE).detach()
+            scores = torch.sigmoid(out)
+        else:
+            raise ValueError(f"Unsupported model type: {args.model}.")
 
         _, pred_mini = torch.topk(scores, k=EVAL_K, dim=1)
         pred_list.append(pred_mini)
