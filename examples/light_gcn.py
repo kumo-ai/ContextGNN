@@ -144,7 +144,7 @@ optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 writer = SummaryWriter()
 
 
-def train() -> float:
+def train(epoch: int) -> float:
     model.train()
     total_loss = total_examples = 0
     total_steps = min(args.max_steps_per_epoch, len(train_loader))
@@ -179,7 +179,8 @@ def train() -> float:
             lambda_reg=args.lambda_reg,
         )
         loss.backward()
-        writer.add_scalar("Step loss/train", float(loss), i)
+        writer.add_scalar("Step loss/train", float(loss),
+                          total_steps * (epoch - 1) + i)
         writer.flush()
         optimizer.step()
         total_loss += float(loss) * pos_rank.numel()
@@ -263,7 +264,7 @@ state_dict = None
 best_val_metric = 0
 
 for epoch in range(1, args.epochs + 1):
-    train_loss = train()
+    train_loss = train(epoch)
     writer.add_scalar("Total loss/train", float(train_loss), epoch)
     writer.flush()
     if epoch % args.eval_epochs_interval == 0:
