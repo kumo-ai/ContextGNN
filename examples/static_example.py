@@ -254,7 +254,8 @@ def static_get_link_train_table_input(
     dst_entity_col = "item_id"
     src_node_idx: Tensor = torch.from_numpy(
         df[src_entity_col].astype(int).values)
-    exploded = df[dst_entity_col].explode()
+    exploded = df[dst_entity_col].explode().dropna()
+
     coo_indices = torch.from_numpy(
         np.stack([exploded.index.values,
                   exploded.values.astype(int)]))
