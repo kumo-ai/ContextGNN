@@ -266,7 +266,7 @@ def static_get_link_train_table_input(
                   exploded.values.astype(int)]))
     sparse_coo = torch.sparse_coo_tensor(
         coo_indices,
-        torch.ones(coo_indices.size(1), dtype=bool),
+        torch.ones(coo_indices.size(1), dtype=bool),  # type: ignore
         (len(src_node_idx), num_dst_nodes),
     )
     dst_node_indices = sparse_coo.to_sparse_csr()
