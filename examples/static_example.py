@@ -183,6 +183,11 @@ def static_data_make_pkey_fkey_graph(
                 'item_id': 'item_table'
             }
             fkey_dict = {key: df[key] for key in fkey_col_to_pkey_table}
+
+        # NOTE: Replicating code logics in
+        # https://github.com/kumo-ai/hybridgnn/blob/master/examples/
+        # relbench_example.py#L86. This is to make sure each table contains=
+        # at least one feature.
         df = pd.DataFrame({"__const__": np.ones(len(table)), **fkey_dict})
 
         dataset = Dataset(
