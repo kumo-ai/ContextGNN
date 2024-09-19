@@ -3,6 +3,8 @@
 python3 light_gcn.py --dataset rel-hm --task user-item-purchase --val_loss
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
