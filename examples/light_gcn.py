@@ -26,7 +26,7 @@ from torch_frame import stype
 from torch_frame.config.text_embedder import TextEmbedderConfig
 from torch_geometric.nn.models import LightGCN
 from torch_geometric.seed import seed_everything
-from torch_geometric.utils import coalesce
+from torch_geometric.utils import coalesce, to_undirected
 from tqdm import tqdm
 
 from hybridgnn.utils import GloveTextEmbedding
@@ -34,15 +34,15 @@ from hybridgnn.utils import GloveTextEmbedding
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-trial")
 parser.add_argument("--task", type=str, default="site-sponsor-run")
-parser.add_argument("--lr", type=float, default=0.001)
-parser.add_argument("--epochs", type=int, default=20)
+parser.add_argument("--lr", type=float, default=0.0001)
+parser.add_argument("--epochs", type=int, default=10)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=1024)
-parser.add_argument("--channels", type=int, default=32)
-parser.add_argument("--num_layers", type=int, default=2)
+parser.add_argument("--channels", type=int, default=64)
+parser.add_argument("--num_layers", type=int, default=3)
 parser.add_argument("--seed", type=int, default=42)
-parser.add_argument("--max_num_train_edges", type=int, default=5000000)
-parser.add_argument("--lambda_reg", type=float, default=0.0)
+parser.add_argument("--max_num_train_edges", type=int, default=3000000)
+parser.add_argument("--lambda_reg", type=float, default=1e-4)
 parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
 parser.add_argument("--val_loss", default=False, action="store_true")
 parser.add_argument("--cache_dir", type=str,
@@ -93,11 +93,9 @@ for split in ["train", "val", "test"]:
 
     # Get n_id for each split #################################################
     src_entities = torch.from_numpy(table.df[task.src_entity_col].to_numpy())
-    if split == "train":
-        # Only dedup src entities for train set
-        # For evaluation we need to align with the train table order
-        src_entities = src_entities.unique()
-    n_id_dict[split] = src_entities
+    # Only validation and test need the source entities for prediction
+    if split != "train":
+        n_id_dict[split] = src_entities
 
     # Get message passing edge_index for each split ###########################
     dst_csr = table_input.dst_nodes[1]
@@ -125,14 +123,23 @@ model = LightGCN(num_total_nodes, embedding_dim=args.channels,
 
 train_edge_index = split_edge_index_dict["train"].to("cpu")
 train_edge_weight = split_edge_attr_dict["train"].to("cpu")
-# Shuffle train edges to avoid
+# Shuffle train edges to avoid only using earlier edges
 perm = torch.randperm(train_edge_index.size(1), device="cpu")
 train_edge_index = train_edge_index[:, perm][:, :args.max_num_train_edges].to(
     device)
 train_edge_weight = train_edge_weight[perm][:args.max_num_train_edges].to(
     device)
-
+train_mp_edge_index, train_mp_edge_weight = to_undirected(
+    train_edge_index, train_edge_weight)
+train_mp_edge_index = train_mp_edge_index.to(device)
+train_mp_edge_weight = train_mp_edge_weight.to(device)
 val_edge_index = split_edge_index_dict["val"].to(device)
+val_edge_weight = split_edge_attr_dict["val"].to(device)
+val_mp_edge_index, val_mp_edge_weight = to_undirected(val_edge_index,
+                                                      val_edge_weight)
+val_mp_edge_index = val_mp_edge_index.to(device)
+val_mp_edge_weight = val_mp_edge_weight.to(device)
+
 val_n_ids = n_id_dict["val"].to(device)
 test_n_ids = n_id_dict["test"].to(device)
 train_loader: DataLoader = DataLoader(
@@ -168,9 +175,9 @@ def train(epoch: int) -> float:
         ], dim=1)
         optimizer.zero_grad()
         pos_rank, neg_rank = model(
-            train_edge_index,
+            train_mp_edge_index,
             edge_label_index,
-            edge_weight=train_edge_weight,
+            edge_weight=train_mp_edge_weight,
         ).chunk(2)
         loss = model.recommendation_loss(
             pos_rank,
@@ -191,24 +198,23 @@ def train(epoch: int) -> float:
 @torch.no_grad()
 def test(
     stage: Literal["val", "test"],
-    train_edge_index: Tensor,
-    val_edge_index: Tensor,
     n_ids: Tensor,
     desc: str,
     epoch: None | int = None,
 ) -> np.ndarray:
     model.eval()
-    edge_index = train_edge_index
-    edge_weight = train_edge_weight
+    mp_edge_index = train_mp_edge_index
+    mp_edge_weight = train_mp_edge_weight
     if stage == "test":
         # For test set we use both train and val edges for message passing
-        edge_index = torch.cat([edge_index, val_edge_index], dim=1)
-        edge_weight = torch.cat(
-            [edge_weight, split_edge_attr_dict["val"].to(edge_weight.device)])
+        mp_edge_index = torch.cat([mp_edge_index, val_mp_edge_index], dim=1)
+        mp_edge_weight = torch.cat(
+            [mp_edge_weight,
+             val_mp_edge_weight.to(mp_edge_index.device)])
         # Remove duplicated edges used for message passing
-        edge_index, edge_weight = coalesce(
-            edge_index,
-            edge_attr=edge_weight,
+        mp_edge_index, mp_edge_weight = coalesce(
+            mp_edge_index,
+            edge_attr=mp_edge_weight,
             num_nodes=num_total_nodes,
         )
     elif args.val_loss and stage == "val":
@@ -231,9 +237,9 @@ def test(
                 neg_edge_label_index,
             ], dim=1)
             pos_rank, neg_rank = model(
-                edge_index,
+                mp_edge_index,
                 edge_label_index,
-                edge_weight=edge_weight,
+                edge_weight=mp_edge_weight,
             ).chunk(2)
             loss = model.recommendation_loss(
                 pos_rank,
@@ -245,9 +251,9 @@ def test(
             total_examples += pos_rank.numel()
         val_loss = total_loss / total_examples
         if epoch is not None:
-            writer.add_scalar("Loss/val", float(val_loss), epoch)
+            writer.add_scalar("Total loss/val", float(val_loss), epoch)
             writer.flush()
-    emb = model.get_embedding(edge_index, edge_weight=edge_weight)
+    emb = model.get_embedding(mp_edge_index, edge_weight=mp_edge_weight)
     src_emb, dst_emb = emb[:num_src_nodes], emb[num_src_nodes:]
     pred_list: List[Tensor] = []
     # Make prediction in minibatch
@@ -270,8 +276,6 @@ for epoch in range(1, args.epochs + 1):
     if epoch % args.eval_epochs_interval == 0:
         val_pred = test(
             stage="val",
-            train_edge_index=train_edge_index,
-            val_edge_index=val_edge_index,
             n_ids=val_n_ids,
             desc="Val",
             epoch=epoch,
@@ -294,8 +298,6 @@ assert state_dict is not None
 model.load_state_dict(state_dict)
 val_pred = test(
     stage="val",
-    train_edge_index=train_edge_index,
-    val_edge_index=val_edge_index,
     n_ids=val_n_ids,
     desc="Val",
 )
@@ -304,8 +306,6 @@ print(f"Best val metrics: {val_metrics}")
 
 test_pred = test(
     stage="test",
-    train_edge_index=train_edge_index,
-    val_edge_index=val_edge_index,
     n_ids=test_n_ids.to(device),
     desc="Test",
 )
