@@ -103,14 +103,10 @@ for split in ["train", "val", "test"]:
     dst_csr = table_input.dst_nodes[1]
     # Compute counts per row from the CSR matrix
     counts_per_row = dst_csr.crow_indices()[1:] - dst_csr.crow_indices()[:-1]
-    # Generate row indices for non-zero elements
-    row_indices = torch.repeat_interleave(
-        torch.arange(table_input.src_nodes[1].shape[0]), counts_per_row)
     # Get source nodes using row indices
-    src = table_input.src_nodes[1][row_indices]
-    # Get destination nodes using column indices
-    dst = torch.arange(num_dst_nodes)[dst_csr.col_indices()]
-    edge_index = torch.stack([src, dst], dim=0)
+    src = table_input.src_nodes[1].repeat_interleave(counts_per_row)
+    # Get edge_index using src and column indices
+    edge_index = torch.stack([src, dst_csr.col_indices()], dim=0)
     # Convert to bipartite graph
     edge_index[1, :] += num_dst_nodes
     # Remove duplicated edges but use edge weight for message passing
