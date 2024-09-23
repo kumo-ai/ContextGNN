@@ -103,34 +103,23 @@ for split in ["train", "val", "test"]:
         persistent_workers=args.num_workers > 0,
     )
 grounds_truth_items = torch.empty(0).to(device)
-count = 0
 for batch in loader_dict["train"]:
-    if count > 5:
-        break
-    import pdb
-    pdb.set_trace()
+    batch.to(device)
     grounds_truth_items = torch.unique(torch.cat((grounds_truth_items, batch[table_input.src_nodes[0]].n_id)))
-    count += 1
 
 seen_dst_items = torch.empty(0).to(device)
-count = 0
 for batch in loader_dict["val"]:
-    if count > 5:
-        break
-    seen_dst_items = torch.unique(torch.cat(seen_dst_items, batch[table_input.src_nodes[0]].n_id))
-    count += 1
+    batch.to(device)
+    seen_dst_items = torch.unique(torch.cat((seen_dst_items, batch[table_input.src_nodes[0]].n_id)))
 
-val_seen = torch.intersect1d(grounds_truth_items, seen_dst_items)
+val_seen = len(torch.intersect1d(grounds_truth_items, seen_dst_items))
 
 seen_dst_items = torch.empty(0).to(device)
-count = 0
 for batch in loader_dict["test"]:
-    if count > 5:
-        break
-    seen_dst_items = torch.unique(torch.cat(seen_dst_items, batch[table_input.src_nodes[0]].n_id))
-    count += 1
+    batch.to(device)
+    seen_dst_items = torch.unique(torch.cat((seen_dst_items, batch[table_input.src_nodes[0]].n_id)))
 
-test_seen = torch.intersect1d(grounds_truth_items, seen_dst_items)
+test_seen = len(torch.intersect1d(grounds_truth_items, seen_dst_items))
 
 num_ground_truth_items = len(grounds_truth_items)
 
