@@ -33,7 +33,7 @@ parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=512)
 parser.add_argument("--channels", type=int, default=128)
 parser.add_argument("--aggr", type=str, default="sum")
-parser.add_argument("--num_layers", type=int, default=6)
+parser.add_argument("--num_layers", type=int, default=2)
 parser.add_argument("--num_neighbors", type=int, default=512)
 parser.add_argument("--temporal_strategy", type=str, default="last")
 parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
@@ -122,4 +122,4 @@ test_seen = len(np.intersect1d(grounds_truth_items.detach().cpu().numpy(), test_
 num_ground_truth_items = len(grounds_truth_items)
 
 # dataset, task, num_layers, num_ground_truth_items, val_num_seen, val_percentage_seen, test_num_seen, test_percentage_seen
-print(args.dataset, args.task, args.num_layers, num_ground_truth_items, val_seen, val_seen/val_seen_dst_items, test_seen, test_seen/test_seen_dst_items)
+print(args.dataset, args.task, args.num_layers, num_ground_truth_items, val_seen, val_seen/len(val_seen_dst_items), test_seen, test_seen/len(test_seen_dst_items))
