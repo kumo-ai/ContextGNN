@@ -1,9 +1,8 @@
 import argparse
 import json
 import os
-import warnings
 from pathlib import Path
-from typing import Dict, List, Tuple, Union
+from typing import Dict, Tuple
 
 import numpy as np
 import torch
@@ -14,7 +13,6 @@ from relbench.modeling.graph import (
     get_link_train_table_input,
     make_pkey_fkey_graph,
 )
-from relbench.modeling.loader import SparseTensor
 from relbench.modeling.utils import get_stype_proposal
 from relbench.tasks import get_task
 from torch import Tensor
@@ -112,14 +110,14 @@ for batch in loader_dict["val"]:
     batch.to(device)
     seen_dst_items = torch.unique(torch.cat((seen_dst_items, batch[table_input.src_nodes[0]].n_id)))
 
-val_seen = len(torch.intersect1d(grounds_truth_items, seen_dst_items))
+val_seen = len(torch.intersect1d(grounds_truth_items.detach().cpu().numpy(), seen_dst_items.detach().cpu().numpy()))
 
 seen_dst_items = torch.empty(0).to(device)
 for batch in loader_dict["test"]:
     batch.to(device)
     seen_dst_items = torch.unique(torch.cat((seen_dst_items, batch[table_input.src_nodes[0]].n_id)))
 
-test_seen = len(torch.intersect1d(grounds_truth_items, seen_dst_items))
+test_seen = len(np.intersect1d(grounds_truth_items.detach().cpu().numpy(), seen_dst_items.detach().cpu().numpy()))
 
 num_ground_truth_items = len(grounds_truth_items)
 
