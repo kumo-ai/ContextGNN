@@ -26,7 +26,7 @@ from torch_geometric.typing import NodeType
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-amazon")
-parser.add_argument("--task", type=str, default="user-item-rate")
+parser.add_argument("--task", type=str, default="user-item-purchase")
 
 parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
@@ -110,7 +110,7 @@ for batch in loader_dict["val"]:
     batch.to(device)
     seen_dst_items = torch.unique(torch.cat((seen_dst_items, batch[table_input.src_nodes[0]].n_id)))
 
-val_seen = len(torch.intersect1d(grounds_truth_items.detach().cpu().numpy(), seen_dst_items.detach().cpu().numpy()))
+val_seen = len(np.intersect1d(grounds_truth_items.detach().cpu().numpy(), seen_dst_items.detach().cpu().numpy()))
 
 seen_dst_items = torch.empty(0).to(device)
 for batch in loader_dict["test"]:
