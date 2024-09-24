@@ -100,27 +100,35 @@ for split in ["train", "val", "test"]:
         num_workers=args.num_workers,
         persistent_workers=args.num_workers > 0,
     )
-train_table = task.get_table(split).df
-grounds_truth_items = torch.empty(0).to(device)
-for batch in loader_dict["train"]:
-    batch.to(device)
-    grounds_truth_items = torch.unique(torch.cat((grounds_truth_items, batch[table_input.src_nodes[0]].n_id)))
-
-val_seen_dst_items = torch.empty(0).to(device)
+val_table = task.get_table('val')
+val_df = val_table.df
+val_seen_percent = []
 for batch in loader_dict["val"]:
     batch.to(device)
-    val_seen_dst_items = torch.unique(torch.cat((val_seen_dst_items, batch[table_input.src_nodes[0]].n_id)))
+    # use ID-GNN module
+    entities = batch[task.src_entity_table]['n_id']
+    # get ID-GNN rhs
+    rhs = batch.n_id_dict[task.dst_entity_table]
+    df = val_df[val_df[task.src_entity_col].isin(entities.tolist())]
+    ground_truth = np.concatenate(df[task.dst_entity_col].values)
+    idgnn_rhs = np.intersect1d(ground_truth, rhs)
+    percent = len(idgnn_rhs)/len(ground_truth)
+    val_seen_percent.append(percent)
 
-val_seen = len(np.intersect1d(grounds_truth_items.detach().cpu().numpy(), val_seen_dst_items.detach().cpu().numpy()))
-
-test_seen_dst_items = torch.empty(0).to(device)
+test_table = task.get_table('test')
+test_df = test_table.df
+test_seen_percent = []
 for batch in loader_dict["test"]:
     batch.to(device)
-    test_seen_dst_items = torch.unique(torch.cat((test_seen_dst_items, batch[table_input.src_nodes[0]].n_id)))
+    # use ID-GNN module
+    entities = batch[task.src_entity_table]['n_id']
+    # get ID-GNN rhs
+    rhs = batch.n_id_dict[task.dst_entity_table]
+    df = test_df[test_df[task.src_entity_col].isin(entities.tolist())]
+    ground_truth = np.concatenate(df[task.dst_entity_col].values)
+    idgnn_rhs = np.intersect1d(ground_truth, rhs)
+    percent = len(idgnn_rhs)/len(ground_truth)
+    test_seen_percent.append(percent)
 
-test_seen = len(np.intersect1d(grounds_truth_items.detach().cpu().numpy(), test_seen_dst_items.detach().cpu().numpy()))
 
-num_ground_truth_items = len(grounds_truth_items)
-
-# dataset, task, num_layers, num_ground_truth_items, val_num_seen, val_percentage_seen, test_num_seen, test_percentage_seen
-print(args.dataset, args.task, args.num_layers, num_ground_truth_items, val_seen, val_seen/len(val_seen_dst_items), test_seen, test_seen/len(test_seen_dst_items))
+print(args.dataset, args.task, args.num_layers, sum(val_seen_percent)/len(val_seen_percent), sum(test_seen_percent)/len(test_seen_percent))
