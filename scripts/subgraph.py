@@ -25,8 +25,8 @@ from torch_geometric.typing import NodeType
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="rel-hm")
-parser.add_argument("--task", type=str, default="user-item-purchase")
+parser.add_argument("--dataset", type=str, default="rel-avito")
+parser.add_argument("--task", type=str, default="user-ad-visit")
 
 parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
@@ -76,7 +76,7 @@ data, col_stats_dict = make_pkey_fkey_graph(
 )
 
 num_neighbors = [
-    int(args.num_neighbors // 2**i) for i in range(args.num_layers)
+    -1 for i in range(args.num_layers)
 ]
 
 loader_dict: Dict[str, NeighborLoader] = {}
@@ -100,6 +100,7 @@ for split in ["train", "val", "test"]:
         num_workers=args.num_workers,
         persistent_workers=args.num_workers > 0,
     )
+train_table = task.get_table(split).df
 grounds_truth_items = torch.empty(0).to(device)
 for batch in loader_dict["train"]:
     batch.to(device)
