@@ -39,7 +39,7 @@ VAL_LOSS_DELTA = 0.001
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-amazon")
-parser.add_argument("--task", type=str, default="user-item-purchase")
+parser.add_argument("--task", type=str, default="user-item-review")
 parser.add_argument(
     "--model",
     type=str,
