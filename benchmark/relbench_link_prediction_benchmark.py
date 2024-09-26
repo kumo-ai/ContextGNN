@@ -53,7 +53,7 @@ parser.add_argument(
     "--num_repeats", type=int, default=5,
     help="Number of repeated training and eval on the best config.")
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
-parser.add_argument("--num_layers", type=int, default=2)
+parser.add_argument("--num_layers", type=int, default=6)
 parser.add_argument("--num_neighbors", type=int, default=128)
 parser.add_argument("--temporal_strategy", type=str, default="last",
                     choices=["last", "uniform"])
