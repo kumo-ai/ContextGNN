@@ -39,7 +39,7 @@ VAL_LOSS_DELTA = 0.001
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-amazon")
-parser.add_argument("--task", type=str, default="user-item-rate")
+parser.add_argument("--task", type=str, default="user-item-purchase")
 parser.add_argument(
     "--model",
     type=str,
@@ -47,7 +47,7 @@ parser.add_argument(
     choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--epochs", type=int, default=20)
-parser.add_argument("--num_trials", type=int, default=50,
+parser.add_argument("--num_trials", type=int, default=10,
                     help="Number of Optuna-based hyper-parameter tuning.")
 parser.add_argument(
     "--num_repeats", type=int, default=5,
