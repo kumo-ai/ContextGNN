@@ -38,8 +38,8 @@ LINK_PREDICTION_METRIC = "link_prediction_map"
 VAL_LOSS_DELTA = 0.001
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="rel-amazon")
-parser.add_argument("--task", type=str, default="user-item-review")
+parser.add_argument("--dataset", type=str, default="rel-hm")
+parser.add_argument("--task", type=str, default="user-item-purchase")
 parser.add_argument(
     "--model",
     type=str,
@@ -53,7 +53,7 @@ parser.add_argument(
     "--num_repeats", type=int, default=5,
     help="Number of repeated training and eval on the best config.")
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
-parser.add_argument("--num_layers", type=int, default=2)
+parser.add_argument("--num_layers", type=int, default=6)
 parser.add_argument("--num_neighbors", type=int, default=128)
 parser.add_argument("--temporal_strategy", type=str, default="last",
                     choices=["last", "uniform"])
