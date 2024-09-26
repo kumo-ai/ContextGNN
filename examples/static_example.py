@@ -48,7 +48,8 @@ parser.add_argument(
     choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--lr", type=float, default=0.001)
-parser.add_argument("--epochs", type=int, default=20)
+# parser.add_argument("--epochs", type=int, default=20)
+parser.add_argument("--epochs", type=int, default=1)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=128)
 parser.add_argument("--channels", type=int, default=128)
@@ -69,6 +70,7 @@ if torch.cuda.is_available():
 seed_everything(args.seed)
 
 PSEUDO_TIME = "pseudo_time"
+TRAIN_SET_TIMESTAMP = pd.Timestamp("1970-01-01")
 SRC_ENTITY_TABLE = "user_table"
 DST_ENTITY_TABLE = "item_table"
 SRC_ENTITY_COL = "user_id"
@@ -115,9 +117,7 @@ train_df = pd.DataFrame({SRC_ENTITY_COL: user_ids, DST_ENTITY_COL: item_ids})
 train_df = train_df.sample(frac=1,
                            random_state=args.seed).reset_index(drop=True)
 # Add pseudo time column
-pseudo_times = pd.date_range(start=pd.Timestamp('1970-01-01'),
-                             periods=len(train_df), freq='s')
-train_df[PSEUDO_TIME] = pseudo_times
+train_df[PSEUDO_TIME] = TRAIN_SET_TIMESTAMP
 
 # load user item link for test data
 test_path = osp.join(input_data_dir, "test.txt")
@@ -134,10 +134,7 @@ test_df = pd.DataFrame({'user_id': user_ids, 'item_id': item_ids})
 # Shuffle train data
 test_df = test_df.sample(frac=1, random_state=args.seed).reset_index(drop=True)
 # Add pseudo time column
-pseudo_times = pd.date_range(
-    start=train_df[PSEUDO_TIME].max() + pd.DateOffset(1), periods=len(test_df),
-    freq='s')
-test_df[PSEUDO_TIME] = pseudo_times
+test_df[PSEUDO_TIME] = TRAIN_SET_TIMESTAMP + pd.Timedelta(days=1)
 
 train_df_explode = train_df.explode(DST_ENTITY_COL).reset_index(drop=True)
 test_df_explode = test_df.explode(DST_ENTITY_COL).reset_index(drop=True)
@@ -320,6 +317,7 @@ if args.model == "idgnn":
             "channels": 128,
             "num_layers": 4,
         },
+        is_static=True,
     ).to(device)
 elif args.model == "hybridgnn":
     model = HybridGNN(
@@ -337,6 +335,7 @@ elif args.model == "hybridgnn":
             "channels": 128,
             "num_layers": 4,
         },
+        is_static=True,
     ).to(device)
 elif args.model == 'shallowrhsgnn':
     model = ShallowRHSGNN(
@@ -354,26 +353,10 @@ elif args.model == 'shallowrhsgnn':
             "channels": 128,
             "num_layers": 4,
         },
+        is_static=True,
     ).to(device)
 else:
     raise ValueError(f"Unsupported model type {args.model}.")
-
-# model = HybridGNN(
-#     data=data,
-#     col_stats_dict=col_stats_dict,
-#     rhs_emb_mode=RHSEmbeddingMode.FUSION,
-#     dst_entity_table=DST_ENTITY_TABLE,
-#     num_nodes=num_dst_nodes_dict["train"],
-#     num_layers=args.num_layers,
-#     channels=args.channels,
-#     aggr="sum",
-#     norm="layer_norm",
-#     embedding_dim=64,
-#     torch_frame_model_kwargs={
-#         "channels": 128,
-#         "num_layers": 4,
-#     },
-# ).to(device)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
@@ -384,13 +367,51 @@ def train() -> float:
     loss_accum = count_accum = 0
     steps = 0
     total_steps = min(len(loader_dict["train"]), args.max_steps_per_epoch)
+
+    # NOTE: This is the grouth truth
     sparse_tensor = SparseTensor(dst_nodes_dict["train"][1], device=device)
     for batch in tqdm(loader_dict["train"], total=total_steps, desc="Train"):
         batch = batch.to(device)
 
-        # Get ground-truth
+        # Get ground truth edges
         input_id = batch[SRC_ENTITY_TABLE].input_id
         src_batch, dst_index = sparse_tensor[input_id]
+
+        # Modify the batch such that the supervision links are
+        # removed from the message passing nodes
+        edge_label_index = torch.stack([src_batch, dst_index], dim=0)
+
+        # batch.edge_type=[
+        #   ('transaction_table', 'f2p_user_id', 'user_table'),
+        #   ('user_table', 'rev_f2p_user_id', 'transaction_table'),
+        #   ('transaction_table', 'f2p_item_id', 'item_table'),
+        #   ('item_table', 'rev_f2p_item_id', 'transaction_table')
+        # ]
+        for edge_type in batch.edge_types:
+            edge_index = batch[edge_type].edge_index
+
+            if edge_type[0] == DST_ENTITY_TABLE or edge_type[
+                    -1] == SRC_ENTITY_TABLE:
+                edge_label_index = torch.stack(
+                    [edge_label_index[1], edge_label_index[0]])
+
+            # NOTE: Assume that dst node indices are consecutive
+            # starting from 0 and monotonically increasing, which is
+            # true for all 3 static datasets: amazon-book, gowalla and
+            # yelp2018 that we have.
+            edge_label_index_hash = edge_label_index[
+                0, :] * NUM_DST_NODES + edge_label_index[1, :]
+            edge_index_hash = edge_index[0, :] * NUM_DST_NODES + edge_index[
+                1, :]
+
+            # Mask to filter out edges in edge_index_hash that are in
+            # edge_label_index_hash
+            mask = ~torch.isin(edge_index_hash, edge_label_index_hash)
+
+            # Apply the mask to filter out the ground truth edges
+            edge_index_filtered = edge_index[:, mask]
+
+            batch[edge_type].edge_index = edge_index_filtered
 
         # Optimization
         optimizer.zero_grad()
@@ -409,7 +430,6 @@ def train() -> float:
             numel = out.numel()
         elif args.model in ['hybridgnn', 'shallowrhsgnn']:
             logits = model(batch, SRC_ENTITY_TABLE, DST_ENTITY_TABLE)
-            edge_label_index = torch.stack([src_batch, dst_index], dim=0)
             loss = sparse_cross_entropy(logits, edge_label_index)
             numel = len(batch[DST_ENTITY_TABLE].batch)
 
