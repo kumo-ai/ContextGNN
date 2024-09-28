@@ -25,15 +25,15 @@ from torch_geometric.typing import NodeType
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="rel-hm")
-parser.add_argument("--task", type=str, default="user-item-purchase")
+parser.add_argument("--dataset", type=str, default="rel-trial")
+parser.add_argument("--task", type=str, default="site-sponsor-run")
 
 parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
-parser.add_argument("--batch_size", type=int, default=16)
+parser.add_argument("--batch_size", type=int, default=512)
 parser.add_argument("--channels", type=int, default=128)
 parser.add_argument("--aggr", type=str, default="sum")
-parser.add_argument("--num_layers", type=int, default=2)
+parser.add_argument("--num_layers", type=int, default=4)
 parser.add_argument("--num_neighbors", type=int, default=128)
 parser.add_argument("--temporal_strategy", type=str, default="last")
 parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
@@ -106,11 +106,11 @@ val_seen_percent = []
 for batch in loader_dict["val"]:
     batch.to(device)
     # use ID-GNN module
-    entities = batch[task.src_entity_table]['n_id'][:args.batch_size]
+    entities = batch[task.src_entity_table]['n_id']
     # get ID-GNN rhs
     rhs = batch.n_id_dict[task.dst_entity_table]
     df = val_df[val_df[task.src_entity_col].isin(entities.tolist())]
-    ground_truth = np.concatenate(df[task.dst_entity_col].values)
+    ground_truth = np.unique(np.concatenate(df[task.dst_entity_col].values))
     idgnn_rhs = np.intersect1d(ground_truth, rhs.cpu())
     percent = len(idgnn_rhs)/len(ground_truth)
     val_seen_percent.append(percent)
@@ -125,7 +125,7 @@ for batch in loader_dict["test"]:
     # get ID-GNN rhs
     rhs = batch.n_id_dict[task.dst_entity_table]
     df = test_df[test_df[task.src_entity_col].isin(entities.tolist())]
-    ground_truth = np.concatenate(df[task.dst_entity_col].values)
+    ground_truth = np.unique(np.concatenate(df[task.dst_entity_col].values))
     idgnn_rhs = np.intersect1d(ground_truth, rhs.cpu())
     percent = len(idgnn_rhs)/len(ground_truth)
     test_seen_percent.append(percent)
