@@ -120,10 +120,10 @@ if args.model == "idgnn":
     model_cls = IDGNN
 elif args.model in ["hybridgnn", "shallowrhsgnn"]:
     model_search_space = {
-        "encoder_channels": [32, 64, 128, 256, 512],
-        "encoder_layers": [2, 4, 8],
-        "channels": [32, 64, 128, 256, 512],
-        "embedding_dim": [32, 64, 128, 256, 512],
+        "encoder_channels": [32, 64, 128, 256],
+        "encoder_layers": [2, 4],
+        "channels": [32, 64, 128, 256],
+        "embedding_dim": [32, 64, 128, 256],
         "norm": ["layer_norm", "batch_norm"],
         "rhs_emb_mode": [
             RHSEmbeddingMode.FUSION, RHSEmbeddingMode.FEATURE,
@@ -131,7 +131,7 @@ elif args.model in ["hybridgnn", "shallowrhsgnn"]:
         ]
     }
     train_search_space = {
-        "batch_size": [256, 512, 1024],
+        "batch_size": [256, 512],
         "base_lr": [0.001, 0.01],
         "gamma_rate": [0.8, 1.],
     }
