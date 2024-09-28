@@ -48,15 +48,14 @@ parser.add_argument(
     choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--lr", type=float, default=0.001)
-# parser.add_argument("--epochs", type=int, default=20)
-parser.add_argument("--epochs", type=int, default=1)
+parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=128)
+parser.add_argument("--supervision_ratio", type=float, default=0.5)
 parser.add_argument("--channels", type=int, default=128)
 parser.add_argument("--aggr", type=str, default="sum")
-parser.add_argument("--num_layers", type=int, default=4)
-parser.add_argument("--num_neighbors", type=int, default=128)
-parser.add_argument("--temporal_strategy", type=str, default="last")
+parser.add_argument("--num_layers", type=int, default=3)
+parser.add_argument("--num_neighbors", type=int, default=32)
 parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
 parser.add_argument("--num_workers", type=int, default=0)
 parser.add_argument("--seed", type=int, default=42)
@@ -73,6 +72,7 @@ PSEUDO_TIME = "pseudo_time"
 TRAIN_SET_TIMESTAMP = pd.Timestamp("1970-01-01")
 SRC_ENTITY_TABLE = "user_table"
 DST_ENTITY_TABLE = "item_table"
+TRANSACTION_TABLE = "transaction_table"
 SRC_ENTITY_COL = "user_id"
 DST_ENTITY_COL = "item_id"
 EVAL_K = 12
@@ -84,7 +84,6 @@ METRICS = [
 
 dataset = args.dataset
 input_data_dir = osp.join("../", "static_data", dataset)
-tune_metric = "link_prediction_map"
 
 # Load user data
 user_path = osp.join(input_data_dir, "user_list.txt")
@@ -92,6 +91,7 @@ src_df = pd.read_csv(user_path, delim_whitespace=True)
 # Drop `org_id` and rename `remap_id` to `user_id`
 src_df = src_df.drop(columns=['org_id']).rename(
     columns={'remap_id': SRC_ENTITY_COL})
+src_df[PSEUDO_TIME] = TRAIN_SET_TIMESTAMP
 
 # Load item data
 item_path = osp.join(input_data_dir, "item_list.txt")
@@ -99,6 +99,7 @@ dst_df = pd.read_csv(item_path, delim_whitespace=True)
 # Drop `org_id` and rename `remap_id` to `item_id`
 dst_df = dst_df.drop(columns=['org_id']).rename(
     columns={'remap_id': DST_ENTITY_COL})
+dst_df[PSEUDO_TIME] = TRAIN_SET_TIMESTAMP
 NUM_DST_NODES = len(dst_df)
 
 # Load user item link for train data
@@ -137,13 +138,12 @@ test_df = test_df.sample(frac=1, random_state=args.seed).reset_index(drop=True)
 test_df[PSEUDO_TIME] = TRAIN_SET_TIMESTAMP + pd.Timedelta(days=1)
 
 train_df_explode = train_df.explode(DST_ENTITY_COL).reset_index(drop=True)
-test_df_explode = test_df.explode(DST_ENTITY_COL).reset_index(drop=True)
-target_df = pd.concat([train_df_explode, test_df_explode], ignore_index=True)
+target_df = train_df_explode
 
 table_dict = {
-    "user_table": src_df,
-    "item_table": dst_df,
-    "transaction_table": target_df,
+    SRC_ENTITY_TABLE: src_df,
+    DST_ENTITY_TABLE: dst_df,
+    TRANSACTION_TABLE: target_df,
 }
 
 
@@ -167,72 +167,40 @@ def static_data_make_pkey_fkey_graph(
 ) -> Tuple[HeteroData, Dict[str, Dict[str, Dict[StatType, Any]]]]:
     data = HeteroData()
     col_stats_dict = dict()
-    for table_name, table in table_dict.items():
-        df = table
-        col_to_stype = col_to_stype_dict[table_name]
 
-        # Remove pkey and fkey
-        col_to_stype = {"__const__": stype.numerical}
-        fkey_dict = {}
-        if table_name == "transaction_table":
-            fkey_col_to_pkey_table = {
-                'user_id': 'user_table',
-                'item_id': 'item_table'
-            }
-            fkey_dict = {key: df[key] for key in fkey_col_to_pkey_table}
+    # Update src nodes information in HeteroData and col_stats_dict
+    src_col_to_stype = col_to_stype_dict[SRC_ENTITY_TABLE]
+    src_dataset = Dataset(
+        df=table_dict[SRC_ENTITY_TABLE],
+        col_to_stype=src_col_to_stype,
+    ).materialize()
+    data[SRC_ENTITY_TABLE].tf = src_dataset.tensor_frame
+    data[SRC_ENTITY_TABLE].time = torch.from_numpy(
+        to_unix_time(table_dict[SRC_ENTITY_TABLE][PSEUDO_TIME]))
+    col_stats_dict[SRC_ENTITY_TABLE] = src_dataset.col_stats
 
-        # NOTE: Replicating code logics in
-        # https://github.com/kumo-ai/hybridgnn/blob/master/examples/
-        # relbench_example.py#L86. This is to make sure each table contains=
-        # at least one feature.
-        df = pd.DataFrame({"__const__": np.ones(len(table)), **fkey_dict})
+    # Update dst nodes information in HeteroData and col_stats_dict
+    dst_col_to_stype = col_to_stype_dict[DST_ENTITY_TABLE]
+    dst_dataset = Dataset(
+        df=table_dict[DST_ENTITY_TABLE],
+        col_to_stype=dst_col_to_stype,
+    ).materialize()
+    data[DST_ENTITY_TABLE].tf = dst_dataset.tensor_frame
+    data[DST_ENTITY_TABLE].time = torch.from_numpy(
+        to_unix_time(table_dict[DST_ENTITY_TABLE][PSEUDO_TIME]))
+    col_stats_dict[DST_ENTITY_TABLE] = dst_dataset.col_stats
 
-        dataset = Dataset(
-            df=df,
-            col_to_stype=col_to_stype,
-        ).materialize()
+    fkey_index = torch.from_numpy(
+        table_dict[TRANSACTION_TABLE][SRC_ENTITY_COL].astype(int).values)
+    pkey_index = torch.from_numpy(
+        table_dict[TRANSACTION_TABLE][DST_ENTITY_COL].astype(int).values)
+    edge_index = torch.stack([fkey_index, pkey_index], dim=0)
+    edge_type = (SRC_ENTITY_TABLE, SRC_ENTITY_COL, DST_ENTITY_TABLE)
+    data[edge_type].edge_index = sort_edge_index(edge_index)
 
-        data[table_name].tf = dataset.tensor_frame
-        col_stats_dict[table_name] = dataset.col_stats
-
-        # Add time attribute:
-        if PSEUDO_TIME in table.columns:
-            data[table_name].time = torch.from_numpy(
-                to_unix_time(table[PSEUDO_TIME]))
-
-        if table_name == "transaction_table":
-            fkey_col_to_pkey_table = {
-                'user_id': 'user_table',
-                'item_id': 'item_table'
-            }
-            for fkey_name, pkey_table_name in fkey_col_to_pkey_table.items():
-                pkey_index = df[fkey_name]
-
-                # Filter out dangling foreign keys
-                mask = ~pkey_index.isna()
-                fkey_index = torch.arange(len(pkey_index))
-
-                # Filter dangling foreign keys:
-                pkey_index = torch.from_numpy(
-                    pkey_index[mask].astype(int).values)
-                fkey_index = fkey_index[torch.from_numpy(mask.values)]
-
-                # Ensure no dangling fkeys
-                assert (pkey_index < len(table_dict[pkey_table_name])).all()
-
-                # fkey -> pkey edges
-                edge_index = torch.stack([fkey_index, pkey_index], dim=0)
-                edge_type = (table_name, f"f2p_{fkey_name}", pkey_table_name)
-                data[edge_type].edge_index = sort_edge_index(edge_index)
-
-                # pkey -> fkey edges.
-                # "rev_" is added so that PyG loader recognizes the reverse
-                # edges
-                edge_index = torch.stack([pkey_index, fkey_index], dim=0)
-                edge_type = (pkey_table_name, f"rev_f2p_{fkey_name}",
-                             table_name)
-                data[edge_type].edge_index = sort_edge_index(edge_index)
-
+    reverse_edge_index = torch.stack([pkey_index, fkey_index], dim=0)
+    reverse_edge_type = (DST_ENTITY_TABLE, DST_ENTITY_COL, SRC_ENTITY_TABLE)
+    data[reverse_edge_type].edge_index = sort_edge_index(reverse_edge_index)
     data.validate()
     return data, col_stats_dict
 
@@ -242,9 +210,15 @@ data, col_stats_dict = static_data_make_pkey_fkey_graph(
     col_to_stype_dict=col_to_stype_dict,
 )
 
+# This setup is giving good test performance with args.epochs == 1
 num_neighbors = [
-    int(args.num_neighbors // 2**i) for i in range(args.num_layers)
+    8,
+    8,
+    8,
 ]
+# num_neighbors = [
+#     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
+# ]
 
 
 def static_get_link_train_table_input(
@@ -252,11 +226,9 @@ def static_get_link_train_table_input(
     num_dst_nodes: int,
 ) -> LinkTrainTableInput:
     df = transaction_df
-    src_entity_col = "user_id"
-    dst_entity_col = "item_id"
     src_node_idx: Tensor = torch.from_numpy(
-        df[src_entity_col].astype(int).values)
-    exploded = df[dst_entity_col].explode().dropna()
+        df[SRC_ENTITY_COL].astype(int).values)
+    exploded = df[DST_ENTITY_COL].explode().dropna()
 
     coo_indices = torch.from_numpy(
         np.stack([exploded.index.values,
@@ -296,14 +268,13 @@ for split in ["train", "test"]:
         input_time=table_input.src_time,
         subgraph_type="bidirectional",
         batch_size=args.batch_size,
-        temporal_strategy=args.temporal_strategy,
         shuffle=split == "train",
         num_workers=args.num_workers,
         persistent_workers=args.num_workers > 0,
+        disjoint=True,
     )
 
 model: Union[IDGNN, HybridGNN, ShallowRHSGNN]
-
 if args.model == "idgnn":
     model = IDGNN(
         data=data,
@@ -315,7 +286,7 @@ if args.model == "idgnn":
         norm="layer_norm",
         torch_frame_model_kwargs={
             "channels": 128,
-            "num_layers": 4,
+            "num_layers": args.num_layers,
         },
         is_static=True,
     ).to(device)
@@ -333,7 +304,7 @@ elif args.model == "hybridgnn":
         embedding_dim=64,
         torch_frame_model_kwargs={
             "channels": 128,
-            "num_layers": 4,
+            "num_layers": args.num_layers,
         },
         is_static=True,
     ).to(device)
@@ -351,7 +322,7 @@ elif args.model == 'shallowrhsgnn':
         embedding_dim=64,
         torch_frame_model_kwargs={
             "channels": 128,
-            "num_layers": 4,
+            "num_layers": args.num_layers,
         },
         is_static=True,
     ).to(device)
@@ -368,7 +339,6 @@ def train() -> float:
     steps = 0
     total_steps = min(len(loader_dict["train"]), args.max_steps_per_epoch)
 
-    # NOTE: This is the grouth truth
     sparse_tensor = SparseTensor(dst_nodes_dict["train"][1], device=device)
     for batch in tqdm(loader_dict["train"], total=total_steps, desc="Train"):
         batch = batch.to(device)
@@ -376,42 +346,59 @@ def train() -> float:
         # Get ground truth edges
         input_id = batch[SRC_ENTITY_TABLE].input_id
         src_batch, dst_index = sparse_tensor[input_id]
-
-        # Modify the batch such that the supervision links are
-        # removed from the message passing nodes
         edge_label_index = torch.stack([src_batch, dst_index], dim=0)
 
+        train_seed_nodes = loader_dict["train"].input_nodes[1].to(
+            src_batch.device)
+        global_src_index = train_seed_nodes[
+            batch[SRC_ENTITY_TABLE].input_id[src_batch]]
+        global_edge_label_index = torch.stack([global_src_index, dst_index],
+                                              dim=0)
+
+        supervision_edgse_sample_size = int(global_edge_label_index.shape[1] *
+                                            args.supervision_ratio)
+        sample_indices = torch.randperm(global_edge_label_index.shape[1],
+                                        device=global_edge_label_index.device
+                                        )[:supervision_edgse_sample_size]
+        global_edge_label_index_sample = (
+            global_edge_label_index[:, sample_indices])
+        # Update edge_label_index to match.
+        edge_label_index = edge_label_index[:, sample_indices]
+
         # batch.edge_type=[
-        #   ('transaction_table', 'f2p_user_id', 'user_table'),
-        #   ('user_table', 'rev_f2p_user_id', 'transaction_table'),
-        #   ('transaction_table', 'f2p_item_id', 'item_table'),
-        #   ('item_table', 'rev_f2p_item_id', 'transaction_table')
+        # ('user_table', 'user_id', 'item_table'),
+        # ('item_table', 'item_id', 'user_table'),
         # ]
-        for edge_type in batch.edge_types:
-            edge_index = batch[edge_type].edge_index
+        edge_type = (SRC_ENTITY_TABLE, SRC_ENTITY_COL, DST_ENTITY_TABLE)
+        edge_index = batch[edge_type].edge_index
 
-            if edge_type[0] == DST_ENTITY_TABLE or edge_type[
-                    -1] == SRC_ENTITY_TABLE:
-                edge_label_index = torch.stack(
-                    [edge_label_index[1], edge_label_index[0]])
+        # NOTE: Assume that dst node indices are consecutive
+        # starting from 0 and monotonically increasing, which is
+        # true for all 3 static datasets: amazon-book, gowalla and
+        # yelp2018 that we have.
+        global_src_index = batch[SRC_ENTITY_TABLE].n_id[edge_index[0]]
+        global_dst_index = batch[DST_ENTITY_TABLE].n_id[edge_index[1]]
+        global_edge_index = torch.stack([global_src_index, global_dst_index])
 
-            # NOTE: Assume that dst node indices are consecutive
-            # starting from 0 and monotonically increasing, which is
-            # true for all 3 static datasets: amazon-book, gowalla and
-            # yelp2018 that we have.
-            edge_label_index_hash = edge_label_index[
-                0, :] * NUM_DST_NODES + edge_label_index[1, :]
-            edge_index_hash = edge_index[0, :] * NUM_DST_NODES + edge_index[
-                1, :]
+        global_edge_label_index_hash = global_edge_label_index_sample[
+            0, :] * NUM_DST_NODES + global_edge_label_index_sample[1, :]
+        global_edge_index_hash = global_edge_index[
+            0, :] * NUM_DST_NODES + global_edge_index[1, :]
 
-            # Mask to filter out edges in edge_index_hash that are in
-            # edge_label_index_hash
-            mask = ~torch.isin(edge_index_hash, edge_label_index_hash)
+        # Mask to filter out edges in edge_index_hash that are in
+        # edge_label_index_hash
+        mask = ~torch.isin(global_edge_index_hash,
+                           global_edge_label_index_hash)
 
-            # Apply the mask to filter out the ground truth edges
-            edge_index_filtered = edge_index[:, mask]
+        # Apply the mask to filter out the ground truth edges
+        edge_index_message_passing = edge_index[:, mask]
 
-            batch[edge_type].edge_index = edge_index_filtered
+        batch[edge_type].edge_index = edge_index_message_passing
+
+        reverse_edge_type = (DST_ENTITY_TABLE, DST_ENTITY_COL,
+                             SRC_ENTITY_TABLE)
+        batch[reverse_edge_type].edge_index = edge_index_message_passing.flip(
+            dims=[0])
 
         # Optimization
         optimizer.zero_grad()

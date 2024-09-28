@@ -98,7 +98,7 @@ class ShallowRHSGNN(RHSEmbeddingGNN):
         x_dict[entity_table][:seed_time.size(0
                                              )] += self.id_awareness_emb.weight
 
-        if self.is_static is not True:
+        if not self.is_static:
             rel_time_dict = self.temporal_encoder(seed_time, batch.time_dict,
                                                   batch.batch_dict)
 
