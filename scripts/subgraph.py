@@ -30,11 +30,11 @@ parser.add_argument("--task", type=str, default="user-item-purchase")
 
 parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
-parser.add_argument("--batch_size", type=int, default=512)
+parser.add_argument("--batch_size", type=int, default=16)
 parser.add_argument("--channels", type=int, default=128)
 parser.add_argument("--aggr", type=str, default="sum")
-parser.add_argument("--num_layers", type=int, default=6)
-parser.add_argument("--num_neighbors", type=int, default=512)
+parser.add_argument("--num_layers", type=int, default=2)
+parser.add_argument("--num_neighbors", type=int, default=128)
 parser.add_argument("--temporal_strategy", type=str, default="last")
 parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
 parser.add_argument("--num_workers", type=int, default=0)
@@ -76,8 +76,8 @@ data, col_stats_dict = make_pkey_fkey_graph(
 )
 
 num_neighbors = [
-    -1 for i in range(args.num_layers)
-]
+            -1 for i in range(args.num_layers)
+            ]
 
 loader_dict: Dict[str, NeighborLoader] = {}
 dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
@@ -106,7 +106,7 @@ val_seen_percent = []
 for batch in loader_dict["val"]:
     batch.to(device)
     # use ID-GNN module
-    entities = batch[task.src_entity_table]['n_id']
+    entities = batch[task.src_entity_table]['n_id'][:batch_size]
     # get ID-GNN rhs
     rhs = batch.n_id_dict[task.dst_entity_table]
     df = val_df[val_df[task.src_entity_col].isin(entities.tolist())]
