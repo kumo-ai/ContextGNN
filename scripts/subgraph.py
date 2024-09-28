@@ -106,7 +106,7 @@ val_seen_percent = []
 for batch in loader_dict["val"]:
     batch.to(device)
     # use ID-GNN module
-    entities = batch[task.src_entity_table]['n_id'][:batch_size]
+    entities = batch[task.src_entity_table]['n_id'][:args.batch_size]
     # get ID-GNN rhs
     rhs = batch.n_id_dict[task.dst_entity_table]
     df = val_df[val_df[task.src_entity_col].isin(entities.tolist())]
