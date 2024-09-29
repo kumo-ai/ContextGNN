@@ -355,16 +355,6 @@ def train() -> float:
         global_edge_label_index = torch.stack([global_src_index, dst_index],
                                               dim=0)
 
-        supervision_edgse_sample_size = int(global_edge_label_index.shape[1] *
-                                            args.supervision_ratio)
-        sample_indices = torch.randperm(global_edge_label_index.shape[1],
-                                        device=global_edge_label_index.device
-                                        )[:supervision_edgse_sample_size]
-        global_edge_label_index_sample = (
-            global_edge_label_index[:, sample_indices])
-        # Update edge_label_index to match.
-        edge_label_index = edge_label_index[:, sample_indices]
-
         # batch.edge_type=[
         # ('user_table', 'user_id', 'item_table'),
         # ('item_table', 'item_id', 'user_table'),
@@ -380,25 +370,80 @@ def train() -> float:
         global_dst_index = batch[DST_ENTITY_TABLE].n_id[edge_index[1]]
         global_edge_index = torch.stack([global_src_index, global_dst_index])
 
-        global_edge_label_index_hash = global_edge_label_index_sample[
-            0, :] * NUM_DST_NODES + global_edge_label_index_sample[1, :]
-        global_edge_index_hash = global_edge_index[
-            0, :] * NUM_DST_NODES + global_edge_index[1, :]
+        global_src_batch = batch[SRC_ENTITY_TABLE].batch[edge_index[0]]
+        global_dst_batch = batch[DST_ENTITY_TABLE].batch[edge_index[1]]
+        assert all(global_src_batch == global_dst_batch) is True
 
-        # Mask to filter out edges in edge_index_hash that are in
-        # edge_label_index_hash
-        mask = ~torch.isin(global_edge_index_hash,
-                           global_edge_label_index_hash)
+        edge_index_message_passing_list = []
+        edge_label_index_list = []
 
-        # Apply the mask to filter out the ground truth edges
-        edge_index_message_passing = edge_index[:, mask]
+        # With a batch for each disjoint subgraph, we first extract all the
+        # ground truth labels for input seed nodes. Then we sample the ground
+        # truth labels according to args.supervision_ratio as supervision
+        # edges for this particular disjoint subgraph. Next we will remove
+        # the selected supervision edges from edge_index to get the message
+        # passing edges to avoid data leakage.
+        for subgraph_index in range(args.batch_size):
+            subgraph_mask = (global_src_batch == subgraph_index)
 
-        batch[edge_type].edge_index = edge_index_message_passing
+            # Extract ground truth links for the src nodes in this subgraph.
+            subgraph_edge_index = edge_index[:, subgraph_mask]
+            subgraph_global_edge_index = global_edge_index[:, subgraph_mask]
+            subgraph_src_indices = subgraph_global_edge_index[0]
+            subgraph_src_indices_unique = torch.unique(subgraph_src_indices)
 
+            ground_truth_mask = torch.isin(global_edge_label_index[0],
+                                           subgraph_src_indices_unique)
+            subgraph_global_edge_label_index = (
+                global_edge_label_index[:, ground_truth_mask])
+            subgraph_edge_label_index = edge_label_index[:, ground_truth_mask]
+
+            # Create supervision edges for this subgraph.
+            supervision_edges_sample_size = (int(
+                subgraph_global_edge_label_index.shape[1] *
+                args.supervision_ratio))
+            subgraph_sample_indices = torch.randperm(
+                subgraph_global_edge_label_index.shape[1],
+                device=subgraph_global_edge_label_index.device,
+            )[:supervision_edges_sample_size]
+
+            # Remove supervision edges from message passing ones.
+            subgraph_global_edge_label_index_sample = (
+                subgraph_global_edge_label_index[:, subgraph_sample_indices])
+            subgraph_edge_label_index_sample = (
+                subgraph_edge_label_index[:, subgraph_sample_indices])
+            subgraph_global_edge_label_index_hash = (
+                subgraph_global_edge_label_index_sample[0, :] * NUM_DST_NODES +
+                subgraph_global_edge_label_index_sample[1, :])
+            subgraph_global_edge_index_hash = subgraph_global_edge_index[
+                0, :] * NUM_DST_NODES + subgraph_global_edge_index[1, :]
+            subgraph_supervison_edge_mask = ~torch.isin(
+                subgraph_global_edge_index_hash,
+                subgraph_global_edge_label_index_hash,
+            )
+            subgraph_edge_index_message_passing = (
+                subgraph_edge_index[:, subgraph_supervison_edge_mask])
+            edge_index_message_passing_list.append(
+                subgraph_edge_index_message_passing)
+            edge_label_index_list.append(subgraph_edge_label_index_sample)
+
+        # Reconstruct message passing and supervision edges for a batch.
+        edge_index_message_passing_concat = torch.cat(
+            [x for x in edge_index_message_passing_list],
+            dim=1,
+        )
+        edge_label_index_concat = torch.cat(
+            [x for x in edge_label_index_list],
+            dim=1,
+        )
+        edge_label_index_concat_unique = torch.unique(
+            edge_label_index_concat.t(), dim=0).t()
+
+        batch[edge_type].edge_index = edge_index_message_passing_concat
         reverse_edge_type = (DST_ENTITY_TABLE, DST_ENTITY_COL,
                              SRC_ENTITY_TABLE)
-        batch[reverse_edge_type].edge_index = edge_index_message_passing.flip(
-            dims=[0])
+        batch[reverse_edge_type].edge_index = (
+            edge_index_message_passing_concat.flip(dims=[0]))
 
         # Optimization
         optimizer.zero_grad()
@@ -417,7 +462,7 @@ def train() -> float:
             numel = out.numel()
         elif args.model in ['hybridgnn', 'shallowrhsgnn']:
             logits = model(batch, SRC_ENTITY_TABLE, DST_ENTITY_TABLE)
-            loss = sparse_cross_entropy(logits, edge_label_index)
+            loss = sparse_cross_entropy(logits, edge_label_index_concat_unique)
             numel = len(batch[DST_ENTITY_TABLE].batch)
 
         loss.backward()
