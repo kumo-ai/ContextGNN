@@ -48,7 +48,7 @@ parser.add_argument(
     choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--lr", type=float, default=0.001)
-parser.add_argument("--epochs", type=int, default=20)
+parser.add_argument("--epochs", type=int, default=1)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=128)
 parser.add_argument("--supervision_ratio", type=float, default=0.5)
@@ -75,7 +75,7 @@ DST_ENTITY_TABLE = "item_table"
 TRANSACTION_TABLE = "transaction_table"
 SRC_ENTITY_COL = "user_id"
 DST_ENTITY_COL = "item_id"
-EVAL_K = 12
+EVAL_K = 20
 METRICS = [
     link_prediction_map,
     link_prediction_precision,
@@ -534,6 +534,7 @@ def evaluate(
 
 for epoch in range(1, args.epochs + 1):
     train_loss = train()
+    print(f"{epoch=}, {train_loss=}")
 
 test_pred = test(loader_dict["test"], desc="Test")
 test_metrics = evaluate(test_pred, test_df)
