@@ -25,12 +25,12 @@ from torch_geometric.typing import NodeType
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="rel-amazon")
-parser.add_argument("--task", type=str, default="user-item-review")
+parser.add_argument("--dataset", type=str, default="rel-stack")
+parser.add_argument("--task", type=str, default="user-post-comment")
 
 parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
-parser.add_argument("--batch_size", type=int, default=32)
+parser.add_argument("--batch_size", type=int, default=8)
 parser.add_argument("--channels", type=int, default=128)
 parser.add_argument("--aggr", type=str, default="sum")
 parser.add_argument("--num_layers", type=int, default=6)
