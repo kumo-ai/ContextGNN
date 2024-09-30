@@ -94,8 +94,7 @@ class NGCF(torch.nn.Module):
 
     def sparse_dropout(self, row: Tensor, col: Tensor, value: Tensor,
                        rate: float, nnz: int) -> SparseTensor:
-        rand = 1 - rate
-        rand += torch.rand(nnz)
+        rand: Tensor = (1 - rate) + torch.rand(nnz)
         assert isinstance(rand, Tensor)
         dropout_mask = torch.floor(rand).type(torch.bool)
         adj = SparseTensor(
@@ -131,8 +130,8 @@ class NGCF(torch.nn.Module):
             ego_emb = F.dropout(ego_emb)
             norm_emb = F.normalize(ego_emb, p=2, dim=1)
             all_embs += [norm_emb]
-        all_embs: Tensor = torch.cat(all_embs, 1)
-        return all_embs
+        res_embs: Tensor = torch.cat(all_embs, 1)
+        return res_embs
 
     def recommendation_loss(
         self,
