@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import copy
 import json
@@ -245,7 +247,7 @@ for epoch in range(1, args.epochs + 1):
             best_val_metric = val_metrics[tune_metric]
             state_dict = copy.deepcopy(model.state_dict())
 
-model.load_state_dict(state_dict)
+model.load_state_dict(state_dict)  # type: ignore
 val_pred = test(*eval_loaders_dict["val"])
 val_metrics = task.evaluate(val_pred, task.get_table("val"))
 print(f"Best Val metrics: {val_metrics}")
