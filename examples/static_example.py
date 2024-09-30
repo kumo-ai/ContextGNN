@@ -48,7 +48,8 @@ parser.add_argument(
     choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--lr", type=float, default=0.001)
-parser.add_argument("--epochs", type=int, default=1)
+# parser.add_argument("--epochs", type=int, default=10)
+parser.add_argument("--epochs", type=int, default=5)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=128)
 parser.add_argument("--supervision_ratio", type=float, default=0.5)
@@ -92,6 +93,7 @@ src_df = pd.read_csv(user_path, delim_whitespace=True)
 src_df = src_df.drop(columns=['org_id']).rename(
     columns={'remap_id': SRC_ENTITY_COL})
 src_df[PSEUDO_TIME] = TRAIN_SET_TIMESTAMP
+NUM_SRC_NODES = len(src_df)
 
 # Load item data
 item_path = osp.join(input_data_dir, "item_list.txt")
@@ -167,22 +169,24 @@ def static_data_make_pkey_fkey_graph(
 ) -> Tuple[HeteroData, Dict[str, Dict[str, Dict[StatType, Any]]]]:
     data = HeteroData()
     col_stats_dict = dict()
-
     # Update src nodes information in HeteroData and col_stats_dict
-    src_col_to_stype = col_to_stype_dict[SRC_ENTITY_TABLE]
+    src_col_to_stype = {"__const__": stype.numerical}
+    src_df = pd.DataFrame({"__const__": np.ones(len(table_dict[SRC_ENTITY_TABLE]))})
     src_dataset = Dataset(
-        df=table_dict[SRC_ENTITY_TABLE],
+        df=src_df,
         col_to_stype=src_col_to_stype,
     ).materialize()
     data[SRC_ENTITY_TABLE].tf = src_dataset.tensor_frame
     data[SRC_ENTITY_TABLE].time = torch.from_numpy(
         to_unix_time(table_dict[SRC_ENTITY_TABLE][PSEUDO_TIME]))
     col_stats_dict[SRC_ENTITY_TABLE] = src_dataset.col_stats
+    # TODO: Remove the id features and add constant features somewhere
 
     # Update dst nodes information in HeteroData and col_stats_dict
-    dst_col_to_stype = col_to_stype_dict[DST_ENTITY_TABLE]
+    dst_col_to_stype = {"__const__": stype.numerical}
+    dst_df = pd.DataFrame({"__const__": np.ones(len(table_dict[DST_ENTITY_TABLE]))})
     dst_dataset = Dataset(
-        df=table_dict[DST_ENTITY_TABLE],
+        df=dst_df,
         col_to_stype=dst_col_to_stype,
     ).materialize()
     data[DST_ENTITY_TABLE].tf = dst_dataset.tensor_frame
@@ -210,16 +214,9 @@ data, col_stats_dict = static_data_make_pkey_fkey_graph(
     col_to_stype_dict=col_to_stype_dict,
 )
 
-# This setup is giving good test performance with args.epochs == 1
 num_neighbors = [
-    8,
-    8,
-    8,
+    int(args.num_neighbors // 2**i) for i in range(args.num_layers)
 ]
-# num_neighbors = [
-#     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
-# ]
-
 
 def static_get_link_train_table_input(
     transaction_df: pd.DataFrame,
@@ -251,6 +248,7 @@ def static_get_link_train_table_input(
 loader_dict: Dict[str, NeighborLoader] = {}
 dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
 num_dst_nodes_dict: Dict[str, int] = {}
+num_src_nodes_dict: Dict[str, int] = {}
 for split in ["train", "test"]:
     if split == "train":
         table = train_df
@@ -259,7 +257,10 @@ for split in ["train", "test"]:
     table_input = static_get_link_train_table_input(
         table, num_dst_nodes=NUM_DST_NODES)
     dst_nodes_dict[split] = table_input.dst_nodes
+
+    num_src_nodes_dict[split] = NUM_SRC_NODES
     num_dst_nodes_dict[split] = table_input.num_dst_nodes
+
     loader_dict[split] = NeighborLoader(
         data,
         num_neighbors=num_neighbors,
@@ -355,6 +356,16 @@ def train() -> float:
         global_edge_label_index = torch.stack([global_src_index, dst_index],
                                               dim=0)
 
+        supervision_edgse_sample_size = int(global_edge_label_index.shape[1] *
+                                            args.supervision_ratio)
+        sample_indices = torch.randperm(global_edge_label_index.shape[1],
+                                        device=global_edge_label_index.device
+                                        )[:supervision_edgse_sample_size]
+        global_edge_label_index_sample = (
+            global_edge_label_index[:, sample_indices])
+        # Update edge_label_index to match.
+        edge_label_index = edge_label_index[:, sample_indices]
+
         # batch.edge_type=[
         # ('user_table', 'user_id', 'item_table'),
         # ('item_table', 'item_id', 'user_table'),
@@ -370,80 +381,35 @@ def train() -> float:
         global_dst_index = batch[DST_ENTITY_TABLE].n_id[edge_index[1]]
         global_edge_index = torch.stack([global_src_index, global_dst_index])
 
+        # Create a mask to track the supervision edges for each disjoint
+        # subgraph in a batch
         global_src_batch = batch[SRC_ENTITY_TABLE].batch[edge_index[0]]
-        global_dst_batch = batch[DST_ENTITY_TABLE].batch[edge_index[1]]
-        assert all(global_src_batch == global_dst_batch) is True
+        # global_dst_batch = batch[DST_ENTITY_TABLE].batch[edge_index[1]]
+        # NOTE: assert all(global_src_batch == global_dst_batch) is True
+        global_seed_nodes = train_seed_nodes[batch[SRC_ENTITY_TABLE].input_id[global_src_batch]]
+        supervision_seed_node_mask = (global_seed_nodes == global_edge_index[0])
 
-        edge_index_message_passing_list = []
-        edge_label_index_list = []
+        global_edge_label_index_hash = global_edge_label_index_sample[
+            0, :] * NUM_DST_NODES + global_edge_label_index_sample[1, :]
+        global_edge_index_hash = global_edge_index[
+            0, :] * NUM_DST_NODES + global_edge_index[1, :]
 
-        # With a batch for each disjoint subgraph, we first extract all the
-        # ground truth labels for input seed nodes. Then we sample the ground
-        # truth labels according to args.supervision_ratio as supervision
-        # edges for this particular disjoint subgraph. Next we will remove
-        # the selected supervision edges from edge_index to get the message
-        # passing edges to avoid data leakage.
-        for subgraph_index in range(args.batch_size):
-            subgraph_mask = (global_src_batch == subgraph_index)
-
-            # Extract ground truth links for the src nodes in this subgraph.
-            subgraph_edge_index = edge_index[:, subgraph_mask]
-            subgraph_global_edge_index = global_edge_index[:, subgraph_mask]
-            subgraph_src_indices = subgraph_global_edge_index[0]
-            subgraph_src_indices_unique = torch.unique(subgraph_src_indices)
-
-            ground_truth_mask = torch.isin(global_edge_label_index[0],
-                                           subgraph_src_indices_unique)
-            subgraph_global_edge_label_index = (
-                global_edge_label_index[:, ground_truth_mask])
-            subgraph_edge_label_index = edge_label_index[:, ground_truth_mask]
-
-            # Create supervision edges for this subgraph.
-            supervision_edges_sample_size = (int(
-                subgraph_global_edge_label_index.shape[1] *
-                args.supervision_ratio))
-            subgraph_sample_indices = torch.randperm(
-                subgraph_global_edge_label_index.shape[1],
-                device=subgraph_global_edge_label_index.device,
-            )[:supervision_edges_sample_size]
-
-            # Remove supervision edges from message passing ones.
-            subgraph_global_edge_label_index_sample = (
-                subgraph_global_edge_label_index[:, subgraph_sample_indices])
-            subgraph_edge_label_index_sample = (
-                subgraph_edge_label_index[:, subgraph_sample_indices])
-            subgraph_global_edge_label_index_hash = (
-                subgraph_global_edge_label_index_sample[0, :] * NUM_DST_NODES +
-                subgraph_global_edge_label_index_sample[1, :])
-            subgraph_global_edge_index_hash = subgraph_global_edge_index[
-                0, :] * NUM_DST_NODES + subgraph_global_edge_index[1, :]
-            subgraph_supervison_edge_mask = ~torch.isin(
-                subgraph_global_edge_index_hash,
-                subgraph_global_edge_label_index_hash,
-            )
-            subgraph_edge_index_message_passing = (
-                subgraph_edge_index[:, subgraph_supervison_edge_mask])
-            edge_index_message_passing_list.append(
-                subgraph_edge_index_message_passing)
-            edge_label_index_list.append(subgraph_edge_label_index_sample)
-
-        # Reconstruct message passing and supervision edges for a batch.
-        edge_index_message_passing_concat = torch.cat(
-            [x for x in edge_index_message_passing_list],
-            dim=1,
+        # Mask to filter out edges in edge_index_hash that are in
+        # edge_label_index_hash
+        mask = ~(
+            torch.isin(global_edge_index_hash, global_edge_label_index_hash) *
+            supervision_seed_node_mask
         )
-        edge_label_index_concat = torch.cat(
-            [x for x in edge_label_index_list],
-            dim=1,
-        )
-        edge_label_index_concat_unique = torch.unique(
-            edge_label_index_concat.t(), dim=0).t()
+        
+        # Apply the mask to filter out the ground truth edges
+        edge_index_message_passing = edge_index[:, mask]
 
-        batch[edge_type].edge_index = edge_index_message_passing_concat
+        batch[edge_type].edge_index = edge_index_message_passing
+
         reverse_edge_type = (DST_ENTITY_TABLE, DST_ENTITY_COL,
                              SRC_ENTITY_TABLE)
-        batch[reverse_edge_type].edge_index = (
-            edge_index_message_passing_concat.flip(dims=[0]))
+        batch[reverse_edge_type].edge_index = edge_index_message_passing.flip(
+            dims=[0])
 
         # Optimization
         optimizer.zero_grad()
@@ -462,7 +428,7 @@ def train() -> float:
             numel = out.numel()
         elif args.model in ['hybridgnn', 'shallowrhsgnn']:
             logits = model(batch, SRC_ENTITY_TABLE, DST_ENTITY_TABLE)
-            loss = sparse_cross_entropy(logits, edge_label_index_concat_unique)
+            loss = sparse_cross_entropy(logits, edge_label_index)
             numel = len(batch[DST_ENTITY_TABLE].batch)
 
         loss.backward()
@@ -534,7 +500,6 @@ def evaluate(
 
 for epoch in range(1, args.epochs + 1):
     train_loss = train()
-    print(f"{epoch=}, {train_loss=}")
 
 test_pred = test(loader_dict["test"], desc="Test")
 test_metrics = evaluate(test_pred, test_df)
