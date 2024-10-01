@@ -126,12 +126,12 @@ for batch in loader_dict["val"]:
     rhs = rhs_batch * num_rhs_nodes + rhs
     ground_truth_rhs = train_src_batch * num_rhs_nodes + train_dst_index
 
-    seen = np.intersect1d(ground_truth_rhs.cpu().numpy(), rhs.cpu().numpy())
+    seen, x_id, _ = np.intersect1d(ground_truth_rhs.cpu().numpy(), rhs.cpu().numpy(), return_indices=True)
 
     # Obtain ground truth at validation timestamp
     val_src_batch, val_dst_index = val_sparse_tensor[input_id]
 
-    seen = np.intersect1d(seen - (train_src_batch * num_rhs_nodes).cpu().numpy(), torch.unique(val_dst_index).cpu().numpy())
+    seen = np.intersect1d(seen - (train_src_batch[x_id] * num_rhs_nodes).cpu().numpy(), torch.unique(val_dst_index).cpu().numpy())
 
     ratio = len(seen)/len(val_dst_index)
     val_seen_percent.append(ratio)
@@ -153,12 +153,12 @@ for batch in loader_dict["test"]:
     rhs = rhs_batch * num_rhs_nodes + rhs
     ground_truth_rhs = train_src_batch * num_rhs_nodes + train_dst_index
 
-    seen = np.intersect1d(ground_truth_rhs.cpu().numpy(), rhs.cpu().numpy())
+    seen, x_id, _ = np.intersect1d(ground_truth_rhs.cpu().numpy(), rhs.cpu().numpy(), return_indices=True)
 
     # Obtain ground truth at test timestamp
     test_src_batch, test_dst_index = test_sparse_tensor[input_id]
 
-    seen = np.intersect1d(seen - (train_src_batch * num_rhs_nodes).cpu().numpy(), torch.unique(test_dst_index).cpu().numpy())
+    seen = np.intersect1d(seen - (train_src_batch[x_id] * num_rhs_nodes).cpu().numpy(), torch.unique(test_dst_index).cpu().numpy())
 
     ratio = len(seen)/len(test_dst_index)
     test_seen_percent.append(ratio)
