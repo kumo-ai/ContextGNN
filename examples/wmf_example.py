@@ -128,7 +128,7 @@ num_src_nodes = num_src_nodes_dict["train"]
 num_dst_nodes = num_dst_nodes_dict["train"]
 print(num_src_nodes, num_dst_nodes)
 
-model = WeightedMatrixFactorization(num_src_nodes, num_dst_nodes, args.embedding_dim)
+model = WeightedMatrixFactorization(num_src_nodes, num_dst_nodes, args.embedding_dim).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
 def train() -> float:
