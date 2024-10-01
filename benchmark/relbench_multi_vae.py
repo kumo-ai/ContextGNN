@@ -25,6 +25,7 @@ from tqdm import tqdm
 
 total_optimization_steps = 0
 LINK_PREDICTION_METRIC = "link_prediction_map"
+VAL_MAP_ATOL = 0.001
 
 
 class MultiVAE(torch.nn.Module):
@@ -64,7 +65,7 @@ class MultiVAE(torch.nn.Module):
                 torch.nn.init.xavier_uniform_(layer.weight)
                 torch.nn.init.trunc_normal_(layer.bias, std=0.001)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         mu, logvar = self.encode(x)
         z = self.reparameterize(mu, logvar)
         return self.decode(z), mu, logvar
@@ -115,20 +116,19 @@ def loss_function(
 def train(
     model: MultiVAE,
     optimizer: torch.optim.Optimizer,
-    train_data: tuple[Tensor, Tensor],
+    data_dict: dict[str, tuple[Tensor, Tensor, Tensor]],
     device: torch.device,
     args,
-    epoch: int,
     task: RecommendationTask,
 ) -> float:
-    rowptr, col, _ = train_data["train"]
+    rowptr, col, _ = data_dict["train"]
     model.train()
     global total_optimization_steps
     N = len(rowptr) - 1
     idxlist = list(range(N))
     np.random.shuffle(idxlist)
-    for start in tqdm(range(0, N, args.batch_size),
-                      desc=f"train: epoch {epoch:3d}"):
+    accum_loss = torch.zeros(1, device=device)
+    for start in tqdm(range(0, N, args.batch_size), desc="train"):
         end = min(start + args.batch_size, N)
         batch_size = end - start
         lhs_index = torch.tensor(
@@ -157,10 +157,15 @@ def train(
         optimizer.step()
         optimizer.zero_grad()
         total_optimization_steps += 1
-    return loss.item()
+        accum_loss += loss.detach()
+    return float(accum_loss / N)
 
 
-def get_rhs_index(lhs_index: Tensor, rowptr: Tensor, col: Tensor) -> Tensor:
+def get_rhs_index(
+    lhs_index: Tensor,
+    rowptr: Tensor,
+    col: Tensor,
+) -> tuple[Tensor, Tensor]:
     src_batch, arange = _batched_arange(rowptr[lhs_index + 1] -
                                         rowptr[lhs_index])
     dst_index = col[arange + rowptr[lhs_index][src_batch]]
@@ -170,16 +175,15 @@ def get_rhs_index(lhs_index: Tensor, rowptr: Tensor, col: Tensor) -> Tensor:
 @torch.no_grad()
 def test(
     model: MultiVAE,
-    data_dict: tuple[Tensor, Tensor],
+    data_dict: dict[str, tuple[Tensor, Tensor, Tensor]],
     device: torch.device,
     args,
-    epoch: int,
     task: RecommendationTask,
     stage: Literal["val", "test"],
-) -> float:
+) -> tuple[float, float]:
     model.eval()
-    # x is from the training set for the validation set,
-    # and from the training+validation set for the test set:
+    # Validating uses training set as the input
+    # Testing uses training and validation sets as the input
     if stage == "val":
         rowptr, col, edge_index = data_dict["train"]
         _, _, test_edge_index = data_dict["val"]
@@ -194,15 +198,14 @@ def test(
             size=task.num_src_nodes,
         )
         col = edge_index[1]
+        _, _, test_edge_index = data_dict["test"]
     else:
         raise ValueError(f"Invalid stage: {stage}")
 
     N = len(rowptr) - 1
     idxlist = list(range(N))
     pred_list: list[Tensor] = []
-    count = 0
-    for start in tqdm(range(0, N, args.batch_size),
-                      desc=f"{stage}: {epoch:3d}"):
+    for start in tqdm(range(0, N, args.batch_size), desc=stage):
         end = min(start + args.batch_size, N)
         batch_size = end - start
         lhs_index = torch.tensor(
@@ -214,8 +217,6 @@ def test(
         lhs_index = lhs_index[lhs_eval_mask]
         if len(lhs_index) == 0:
             continue
-        count += len(lhs_index)
-
         src_batch, dst_index = get_rhs_index(lhs_index, rowptr, col)
         # convert rowptr and col to a dense tensor of ones:
         batch_size = len(lhs_index)
@@ -232,19 +233,18 @@ def test(
 
     pred = torch.cat(pred_list, dim=0).cpu().numpy()
     res = task.evaluate(pred, task.get_table(stage))
-    return res[LINK_PREDICTION_METRIC]
+    # TODO: Return loss
+    return 0.0, float(res[LINK_PREDICTION_METRIC])
 
 
 def load_data_dict(
     task: RecommendationTask,
     device: torch.device,
-) -> dict[str, tuple[Tensor, Tensor]]:
-    data_dict: dict[str, tuple[Tensor, Tensor]] = {}
+) -> dict[str, tuple[Tensor, Tensor, Tensor]]:
+    data_dict: dict[str, tuple[Tensor, Tensor, Tensor]] = {}
     for split in ['train', 'val', 'test']:
         split_df = task.get_table(split).df.drop(
             columns=['timestamp']).explode(task.dst_entity_col)
-        # print summary of the df
-        print(split_df.info())
         edge_index = torch.tensor(
             [
                 split_df[task.src_entity_col].values,
@@ -269,7 +269,11 @@ def main() -> None:
         type=str,
         default='rel-trial',
         choices=[
-            'rel-trial', 'rel-amazon', 'rel-stack', 'rel-avito', 'rel-hm'
+            'rel-trial',
+            'rel-amazon',
+            'rel-stack',
+            'rel-avito',
+            'rel-hm',
         ],
     )
     parser.add_argument('--task', type=str, default='site-sponsor-run')
@@ -283,14 +287,17 @@ def main() -> None:
     parser.add_argument('--result_path', type=str, default='result.pt')
     args = parser.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    filename = f'multi_vae_{args.dataset}_{args.task}.pt'
     task: RecommendationTask = get_task(args.dataset, args.task, download=True)
     data_dict = load_data_dict(task, device)
     seed_everything(args.seed)
-    p_dims = [200, 600, task.num_dst_nodes]
-    model = MultiVAE(p_dims).to(device)
+    model = MultiVAE(
+        p_dims=[200, 600, task.num_dst_nodes],
+        q_dims=None,
+    ).to(device)
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=1e-3,
+        lr=args.lr,
         weight_decay=args.wd,
     )
     best_val_map = 0.0
@@ -301,42 +308,41 @@ def main() -> None:
             data_dict,
             device,
             args,
-            epoch,
             task,
         )
-        val_map = test(
+        val_loss, val_map = test(
             model,
             data_dict,
             device,
             args,
-            epoch,
             task,
             "val",
         )
+
         if val_map > best_val_map:
             best_val_map = val_map
-            torch.save(
-                model.state_dict(),
-                f'vae_{args.dataset}_{args.task}.pt',
-            )
+            torch.save(model, filename)
 
-        print(f'Epoch {epoch:3d}, '
-              f'train_loss {train_loss:4.2f}, '
-              f'val_map {val_map:4.2f}')
+        print(f'Epoch {epoch:3d}: '
+              f'train_loss {train_loss:4.4f}, '
+              f'val_map {val_map:4.4f}, '
+              f'best_val_map {best_val_map:4.4f}')
 
-    # TODO: test from saved model
-    # with open(args.result_path, 'rb') as f:
-    #     model = torch.load(f)
-    test_map = test(
+        # Check if we should early stop
+        if val_map < best_val_map - VAL_MAP_ATOL:
+            print(f"Best val: {best_val_map:.4f}")
+            break
+
+    model = torch.load(filename).to(device)
+    test_loss, test_map = test(
         model,
         data_dict,
         device,
         args,
-        epoch,
         task,
         "test",
     )
-    print(f"val_map: {val_map}, test_map: {test_map}")
+    print(f"best_val_map: {best_val_map}, test_map: {test_map}")
 
 
 if __name__ == '__main__':
