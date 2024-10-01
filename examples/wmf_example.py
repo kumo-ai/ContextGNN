@@ -32,7 +32,7 @@ from torch_geometric.typing import NodeType
 from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from tqdm import tqdm
 
-from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN
+from hybridgnn.nn.models import WeightedMatrixFactorization
 from hybridgnn.utils import GloveTextEmbedding, RHSEmbeddingMode
 
 parser = argparse.ArgumentParser()
@@ -51,7 +51,8 @@ parser.add_argument("--batch_size", type=int, default=512)
 parser.add_argument("--channels", type=int, default=128)
 parser.add_argument("--aggr", type=str, default="sum")
 parser.add_argument("--num_layers", type=int, default=4)
-parser.add_argument("--num_neighbors", type=int, default=128)
+parser.add_argument("--num_neighbors", type=int, default=16)
+parser.add_argument("--embedding_dim", type=int, default=128)
 parser.add_argument("--temporal_strategy", type=str, default="last")
 parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
 parser.add_argument("--num_workers", type=int, default=0)
@@ -100,16 +101,95 @@ loader_dict: Dict[str, NeighborLoader] = {}
 dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
 src_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
 num_dst_nodes_dict: Dict[str, int] = {}
+num_src_nodes_dict: Dict[str, int] = {}
 for split in ["train", "val", "test"]:
     table = task.get_table(split)
     table_input = get_link_train_table_input(table, task)
     dst_nodes_dict[split] = table_input.dst_nodes
     src_nodes_dict[split] = table_input.src_nodes
     num_dst_nodes_dict[split] = table_input.num_dst_nodes
+    num_src_nodes_dict[split] = len(table_input.src_nodes[1])
+    loader_dict[split] = NeighborLoader(
+        data,
+        num_neighbors=num_neighbors,
+        time_attr="time",
+        input_nodes=table_input.src_nodes,
+        input_time=table_input.src_time,
+        subgraph_type="bidirectional",
+        batch_size=args.batch_size,
+        temporal_strategy=args.temporal_strategy,
+        shuffle=split == "train",
+        num_workers=args.num_workers,
+        persistent_workers=args.num_workers > 0,
+    )
 
-dst_nodes = torch.cat(dst_nodes_dict["train"][1], dst_nodes_dict["val"][1])
-src_nodes = torch.cat(src_nodes_dict["train"][1], src_nodes_dict["val"][1])
-total_src_nodes = len(torch.unique(src_nodes))
-total_dst_nodes = len(torch.unique(dst_nodes))
 
-train_table = task.get_table("train").df
+num_src_nodes = num_src_nodes_dict["train"]
+num_dst_nodes = num_dst_nodes_dict["train"]
+print(num_src_nodes, num_dst_nodes)
+
+model = WeightedMatrixFactorization(num_src_nodes, num_dst_nodes, args.embedding_dim)
+optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+
+def train() -> float:
+    model.train()
+
+    loss_accum = count_accum = 0
+    steps = 0
+    total_steps = min(len(loader_dict["train"]), args.max_steps_per_epoch)
+    sparse_tensor = SparseTensor(dst_nodes_dict["train"][1], device=device)
+    for batch in tqdm(loader_dict["train"], total=total_steps, desc="Train"):
+        batch = batch.to(device)
+
+        # Get ground-truth
+        input_id = batch[task.src_entity_table].input_id
+        src_batch, dst_index = sparse_tensor[input_id]
+
+        src_tensor = batch[task.src_entity_table].input_id
+
+        # Optimization
+        optimizer.zero_grad()
+
+        loss = model(input_id[src_batch], dst_index)
+        loss /= len(src_batch)
+
+        loss.backward()
+
+        optimizer.step()
+        
+        numel = len(src_tensor)
+        loss_accum += float(loss) * numel
+        count_accum += numel
+
+        steps += 1
+        if steps > args.max_steps_per_epoch:
+            break
+
+@torch.no_grad()
+def test(loader: NeighborLoader, desc: str) -> np.ndarray:
+    model.eval()
+    pass
+
+state_dict = None
+best_val_metric = 0
+for epoch in range(1, args.epochs + 1):
+    train_loss = train()
+    if epoch % args.eval_epochs_interval == 0:
+        val_pred = test(loader_dict["val"], desc="Val")
+        val_metrics = task.evaluate(val_pred, task.get_table("val"))
+        print(f"Epoch: {epoch:02d}, Train loss: {train_loss}, "
+              f"Val metrics: {val_metrics}")
+
+        if val_metrics[tune_metric] > best_val_metric:
+            best_val_metric = val_metrics[tune_metric]
+            state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
+
+assert state_dict is not None
+model.load_state_dict(state_dict)
+val_pred = test(loader_dict["val"], desc="Best val")
+val_metrics = task.evaluate(val_pred, task.get_table("val"))
+print(f"Best val metrics: {val_metrics}")
+
+test_pred = test(loader_dict["test"], desc="Test")
+test_metrics = task.evaluate(test_pred)
+print(f"Best test metrics: {test_metrics}")

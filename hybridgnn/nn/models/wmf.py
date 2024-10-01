@@ -17,11 +17,13 @@ class WeightedMatrixFactorization(torch.nn.Module):
         embedding_dim: int,
     ) -> None:
         super().__init__()
-        self.rhs = torch.nn.Embedding(num_src_nodes, embedding_dim)
-        self.lhs = torch.nn.Embedding(num_dst_nodes, embedding_dim)
+        self.rhs = torch.nn.Embedding(num_dst_nodes, embedding_dim)
+        self.lhs = torch.nn.Embedding(num_src_nodes, embedding_dim)
         self.w0 = torch.nn.Parameter(torch.tensor(1.0))
         self.num_src_nodes = num_src_nodes
         self.num_dst_nodes = num_dst_nodes
+        self.register_buffer("full_lhs", torch.arange(0, self.num_src_nodes))
+        self.register_buffer("full_rhs", torch.arange(0, self.num_dst_nodes))
     
     def reset_parameters(self) -> None:
         super().reset_parameters()
@@ -34,9 +36,18 @@ class WeightedMatrixFactorization(torch.nn.Module):
         src_tensor: Tensor,
         dst_tensor: Tensor,
     ) -> Tensor:
-        lhs_embedding = self.lhs()
-        rhs_embedding = self.rhs()
-        mask = torch.zeros(self.num_src_nodes, self.num_dst_nodes).to(src_tensor.device)
-        mask[src_tensor][dst_tensor] = 1
-        mat = lhs_embedding @ rhs_embedding.t()
-        return ((1 - mat[mask]) **2).sum() + self.w0*(mat[~mask]**2).sum()
+        lhs_embedding = self.lhs(src_tensor)
+        rhs_embedding = self.rhs(dst_tensor)
+        mat_pos = lhs_embedding @ rhs_embedding.t()
+
+        mask = ~torch.isin(self.full_lhs, src_tensor)
+
+        # Filter out the values present in the first tensor
+        neg_lhs = self.full_lhs[mask]
+        mask = ~torch.isin(self.full_rhs, dst_tensor)
+        neg_rhs = self.full_rhs[mask]
+        from torch.cuda.amp import autocast
+
+        with autocast():
+            mat_neg = torch.mm(self.lhs(neg_lhs).half(), self.rhs(neg_rhs).half().t())
+        return ((1.0 - mat_pos) **2).sum() + self.w0*((mat_neg**2).sum())
