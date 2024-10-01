@@ -13,6 +13,7 @@ from relbench.modeling.graph import (
     get_link_train_table_input,
     make_pkey_fkey_graph,
 )
+from relbench.modeling.loader import SparseTensor
 from relbench.modeling.utils import get_stype_proposal
 from relbench.tasks import get_task
 from torch import Tensor
@@ -25,15 +26,15 @@ from torch_geometric.typing import NodeType
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="rel-amazon")
-parser.add_argument("--task", type=str, default="user-item-review")
+parser.add_argument("--dataset", type=str, default="rel-trial")
+parser.add_argument("--task", type=str, default="condition-sponsor-run")
 
 parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=128)
 parser.add_argument("--channels", type=int, default=128)
 parser.add_argument("--aggr", type=str, default="sum")
-parser.add_argument("--num_layers", type=int, default=2)
+parser.add_argument("--num_layers", type=int, default=4)
 parser.add_argument("--num_neighbors", type=int, default=128)
 parser.add_argument("--temporal_strategy", type=str, default="last")
 parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
@@ -100,35 +101,59 @@ for split in ["train", "val", "test"]:
         num_workers=args.num_workers,
         persistent_workers=args.num_workers > 0,
     )
+train_table = task.get_table('train')
+train_table_input = get_link_train_table_input(table, task)
 val_table = task.get_table('val')
+val_table_input = get_link_train_table_input(table, task)
 val_df = val_table.df
 val_seen_percent = []
+num_rhs_nodes = num_dst_nodes_dict["train"]
+train_sparse_tensor = SparseTensor(dst_nodes_dict["train"][1], device=device)
+val_sparse_tensor = SparseTensor(dst_nodes_dict["val"][1], device=device)
+test_sparse_tensor = SparseTensor(dst_nodes_dict["test"][1], device=device)
+
 for batch in loader_dict["val"]:
     batch.to(device)
-    # use ID-GNN module
-    entities = batch[task.src_entity_table]['n_id']
-    # get ID-GNN rhs
-    rhs = batch.n_id_dict[task.dst_entity_table]
-    df = val_df[val_df[task.src_entity_col].isin(entities.tolist())]
-    ground_truth = np.unique(np.concatenate(df[task.dst_entity_col].values))
-    idgnn_rhs = np.intersect1d(ground_truth, rhs.cpu())
-    percent = len(idgnn_rhs)/len(ground_truth)
-    val_seen_percent.append(percent)
+
+    rhs = batch[task.dst_entity_table].n_id
+    rhs_batch = batch[task.dst_entity_table].batch
+
+    input_id = batch[task.src_entity_table].input_id
+    # Obtain ground truth seen during training
+    train_src_batch, train_dst_index = train_sparse_tensor[input_id]
+
+    # map to 1d-vectors
+    rhs = rhs_batch * num_rhs_nodes + rhs
+    ground_truth_rhs = train_src_batch * num_rhs_nodes + train_dst_index
+
+    seen = np.intersect1d(ground_truth_rhs.cpu().numpy(), rhs.cpu().numpy())
+
+    # Obtain ground truth at validation
+    val_src_batch, val_dst_index = val_sparse_tensor[input_id]
+    ratio = len(seen)/len(val_dst_index)
 
 test_table = task.get_table('test')
 test_df = test_table.df
 test_seen_percent = []
 for batch in loader_dict["test"]:
     batch.to(device)
-    # use ID-GNN module
-    entities = batch[task.src_entity_table]['n_id']
-    # get ID-GNN rhs
-    rhs = batch.n_id_dict[task.dst_entity_table]
-    df = test_df[test_df[task.src_entity_col].isin(entities.tolist())]
-    ground_truth = np.unique(np.concatenate(df[task.dst_entity_col].values))
-    idgnn_rhs = np.intersect1d(ground_truth, rhs.cpu())
-    percent = len(idgnn_rhs)/len(ground_truth)
-    test_seen_percent.append(percent)
+
+    rhs = batch[task.dst_entity_table].n_id
+    rhs_batch = batch[task.dst_entity_table].batch
+
+    input_id = batch[task.src_entity_table].input_id
+    # Obtain ground truth seen during training
+    train_src_batch, train_dst_index = train_sparse_tensor[input_id]
+
+    # map to 1d-vectors
+    rhs = rhs_batch * num_rhs_nodes + rhs
+    ground_truth_rhs = train_src_batch * num_rhs_nodes + train_dst_index
+
+    seen = np.intersect1d(ground_truth_rhs.cpu().numpy(), rhs.cpu().numpy())
+
+    # Obtain ground truth at validation
+    test_src_batch, test_dst_index = test_sparse_tensor[input_id]
+    ratio = len(seen)/len(test_dst_index)
 
 
 print(args.dataset, args.task, args.num_layers, sum(val_seen_percent)/len(val_seen_percent), sum(test_seen_percent)/len(test_seen_percent))
