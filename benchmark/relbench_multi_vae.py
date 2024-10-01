@@ -329,7 +329,8 @@ def main() -> None:
               f'best_val_map {best_val_map:4.4f}')
 
         # Check if we should early stop
-        if val_map < best_val_map - VAL_MAP_ATOL:
+        should_check_early_stop = epoch > 10
+        if should_check_early_stop and val_map < best_val_map - VAL_MAP_ATOL:
             print(f"Best val: {best_val_map:.4f}")
             break
 
