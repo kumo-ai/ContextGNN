@@ -15,11 +15,12 @@ class WeightedMatrixFactorization(torch.nn.Module):
         num_src_nodes: int,
         num_dst_nodes: int,
         embedding_dim: int,
+        w0:float = 0.5,
     ) -> None:
         super().__init__()
         self.rhs = torch.nn.Embedding(num_dst_nodes, embedding_dim)
         self.lhs = torch.nn.Embedding(num_src_nodes, embedding_dim)
-        self.w0 = torch.nn.Parameter(torch.tensor(1.0))
+        self.w0 = w0
         self.num_src_nodes = num_src_nodes
         self.num_dst_nodes = num_dst_nodes
         self.register_buffer("full_lhs", torch.arange(0, self.num_src_nodes))
@@ -29,7 +30,6 @@ class WeightedMatrixFactorization(torch.nn.Module):
         super().reset_parameters()
         self.rhs.reset_parameters()
         self.lhs.reset_parameters()
-        self.w0.reset_parameters()
 
     def forward(
         self,
@@ -40,11 +40,11 @@ class WeightedMatrixFactorization(torch.nn.Module):
         rhs_embedding = self.rhs(dst_tensor)
         mat_pos = lhs_embedding @ rhs_embedding.t()
 
-        mask = ~torch.isin(self.full_lhs, src_tensor)
+        #mask = ~torch.isin(self.full_lhs, src_tensor)
 
         # Filter out the values present in the first tensor
-        neg_lhs = self.full_lhs[mask]
+        #neg_lhs = self.full_lhs[mask]
         mask = ~torch.isin(self.full_rhs, dst_tensor)
         neg_rhs = self.full_rhs[mask]
-        mat_neg = torch.mm(self.lhs(neg_lhs), self.rhs(neg_rhs).t())
+        mat_neg = torch.mm(lhs_embedding, self.rhs(neg_rhs).t())
         return ((1.0 - mat_pos) **2).sum() + self.w0*((mat_neg**2).sum())

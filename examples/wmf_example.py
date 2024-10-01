@@ -38,12 +38,6 @@ from hybridgnn.utils import GloveTextEmbedding, RHSEmbeddingMode
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-trial")
 parser.add_argument("--task", type=str, default="site-sponsor-run")
-parser.add_argument(
-    "--model",
-    type=str,
-    default="hybridgnn",
-    choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
-)
 parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
@@ -126,7 +120,6 @@ for split in ["train", "val", "test"]:
 
 num_src_nodes = num_src_nodes_dict["train"]
 num_dst_nodes = num_dst_nodes_dict["train"]
-print(num_src_nodes, num_dst_nodes)
 
 model = WeightedMatrixFactorization(num_src_nodes, num_dst_nodes, args.embedding_dim)
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
@@ -145,8 +138,6 @@ def train() -> float:
         input_id = batch[task.src_entity_table].input_id
         src_batch, dst_index = sparse_tensor[input_id]
 
-        src_tensor = batch[task.src_entity_table].input_id
-
         # Optimization
         optimizer.zero_grad()
 
@@ -157,25 +148,39 @@ def train() -> float:
 
         optimizer.step()
         
-        numel = len(src_tensor)
+        numel = len(src_batch)
         loss_accum += float(loss) * numel
         count_accum += numel
 
         steps += 1
         if steps > args.max_steps_per_epoch:
             break
+    return loss_accum / count_accum if count_accum > 0 else float("nan")
 
 @torch.no_grad()
-def test(loader: NeighborLoader, desc: str) -> np.ndarray:
+def test(loader: NeighborLoader, desc: str, sparse_tensor) -> np.ndarray:
     model.eval()
-    pass
+
+    pred_list: List[Tensor] = []
+    for batch in tqdm(loader, desc=desc):
+        batch = batch.to(device)
+        input_id = batch[task.src_entity_table].input_id
+        scores = model.lhs(input_id) @ model.rhs(model.full_rhs).t()
+
+        _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
+        pred_list.append(pred_mini)
+    pred = torch.cat(pred_list, dim=0).cpu().numpy()
+    return pred
+
 
 state_dict = None
 best_val_metric = 0
+val_sparse_tensor = SparseTensor(dst_nodes_dict["val"][1], device=device)
+test_sparse_tensor = SparseTensor(dst_nodes_dict["test"][1], device=device)
 for epoch in range(1, args.epochs + 1):
     train_loss = train()
     if epoch % args.eval_epochs_interval == 0:
-        val_pred = test(loader_dict["val"], desc="Val")
+        val_pred = test(loader_dict["val"], desc="Val", sparse_tensor=val_sparse_tensor)
         val_metrics = task.evaluate(val_pred, task.get_table("val"))
         print(f"Epoch: {epoch:02d}, Train loss: {train_loss}, "
               f"Val metrics: {val_metrics}")
@@ -186,10 +191,10 @@ for epoch in range(1, args.epochs + 1):
 
 assert state_dict is not None
 model.load_state_dict(state_dict)
-val_pred = test(loader_dict["val"], desc="Best val")
+val_pred = test(loader_dict["val"], desc="Best val", sparse_tensor=val_sparse_tensor)
 val_metrics = task.evaluate(val_pred, task.get_table("val"))
 print(f"Best val metrics: {val_metrics}")
 
-test_pred = test(loader_dict["test"], desc="Test")
+test_pred = test(loader_dict["test"], desc="Test", sparse_tensor=test_sparse_tensor)
 test_metrics = task.evaluate(test_pred)
 print(f"Best test metrics: {test_metrics}")
