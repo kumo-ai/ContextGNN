@@ -46,8 +46,5 @@ class WeightedMatrixFactorization(torch.nn.Module):
         neg_lhs = self.full_lhs[mask]
         mask = ~torch.isin(self.full_rhs, dst_tensor)
         neg_rhs = self.full_rhs[mask]
-        from torch.cuda.amp import autocast
-
-        with autocast():
-            mat_neg = torch.mm(self.lhs(neg_lhs).half(), self.rhs(neg_rhs).half().t())
+        mat_neg = torch.mm(self.lhs(neg_lhs), self.rhs(neg_rhs).t())
         return ((1.0 - mat_pos) **2).sum() + self.w0*((mat_neg**2).sum())
