@@ -125,11 +125,10 @@ def train(
     model.train()
     global total_optimization_steps
     N = len(rowptr) - 1
-    # FIXME: enable full training
-    N = args.batch_size * 2  # for debug
     idxlist = list(range(N))
     np.random.shuffle(idxlist)
-    for start in tqdm(range(0, N, args.batch_size), desc=f"train epoch {epoch:3d}"):
+    for start in tqdm(range(0, N, args.batch_size),
+                      desc=f"train: epoch {epoch:3d}"):
         end = min(start + args.batch_size, N)
         batch_size = end - start
         lhs_index = torch.tensor(
@@ -183,11 +182,11 @@ def test(
     # and from the training+validation set for the test set:
     if stage == "val":
         rowptr, col, edge_index = data_dict["train"]
-        test_edge_index = data_dict["val"]
+        _, _, test_edge_index = data_dict["val"]
     elif stage == "test":
         # Combine train and val set:
-        edge_index_train = data_dict["train"]
-        edge_index_val = data_dict["val"]
+        _, _, edge_index_train = data_dict["train"]
+        _, _, edge_index_val = data_dict["val"]
         edge_index = torch.cat([edge_index_train, edge_index_val], dim=1)
         edge_index = coalesce(edge_index)
         rowptr = torch._convert_indices_from_coo_to_csr(
@@ -201,7 +200,9 @@ def test(
     N = len(rowptr) - 1
     idxlist = list(range(N))
     pred_list: list[Tensor] = []
-    for start in tqdm(range(0, N, args.batch_size), desc=f"{stage}: {epoch:3d}"):
+    count = 0
+    for start in tqdm(range(0, N, args.batch_size),
+                      desc=f"{stage}: {epoch:3d}"):
         end = min(start + args.batch_size, N)
         batch_size = end - start
         lhs_index = torch.tensor(
@@ -213,6 +214,7 @@ def test(
         lhs_index = lhs_index[lhs_eval_mask]
         if len(lhs_index) == 0:
             continue
+        count += len(lhs_index)
 
         src_batch, dst_index = get_rhs_index(lhs_index, rowptr, col)
         # convert rowptr and col to a dense tensor of ones:
@@ -228,8 +230,8 @@ def test(
         _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
         pred_list.append(pred_mini)
 
-    pred = torch.cat(pred_list, dim=0).cpu().numpy()  # (37004, 10) but should be (37003, 10) whyyyy
-    res = task.evaluate(pred, task.get_table(stage))  # ValueError: The shape of pred must be (37003, 10), but (37004, 10) given.
+    pred = torch.cat(pred_list, dim=0).cpu().numpy()
+    res = task.evaluate(pred, task.get_table(stage))
     return res[LINK_PREDICTION_METRIC]
 
 
