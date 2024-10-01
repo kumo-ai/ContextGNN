@@ -26,8 +26,8 @@ from torch_geometric.typing import NodeType
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="rel-stack")
-parser.add_argument("--task", type=str, default="post-post-related")
+parser.add_argument("--dataset", type=str, default="rel-hm")
+parser.add_argument("--task", type=str, default="user-item-purchase")
 
 parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
@@ -131,7 +131,7 @@ for batch in loader_dict["val"]:
     # Obtain ground truth at validation timestamp
     val_src_batch, val_dst_index = val_sparse_tensor[input_id]
 
-    seen = np.intersect1d(seen - (train_src_batch * num_rhs_nodes), torch.unique(val_dst_index).cpu().numpy())
+    seen = np.intersect1d(seen - (train_src_batch * num_rhs_nodes).cpu().numpy(), torch.unique(val_dst_index).cpu().numpy())
 
     ratio = len(seen)/len(val_dst_index)
     val_seen_percent.append(ratio)
@@ -158,7 +158,7 @@ for batch in loader_dict["test"]:
     # Obtain ground truth at test timestamp
     test_src_batch, test_dst_index = test_sparse_tensor[input_id]
 
-    seen = np.intersect1d(seen - (train_src_batch * num_rhs_nodes), torch.unique(test_dst_index).cpu().numpy())
+    seen = np.intersect1d(seen - (train_src_batch * num_rhs_nodes).cpu().numpy(), torch.unique(test_dst_index).cpu().numpy())
 
     ratio = len(seen)/len(test_dst_index)
     test_seen_percent.append(ratio)
