@@ -20,6 +20,8 @@ class WeightedMatrixFactorization(torch.nn.Module):
         self.rhs = torch.nn.Embedding(num_src_nodes, embedding_dim)
         self.lhs = torch.nn.Embedding(num_dst_nodes, embedding_dim)
         self.w0 = torch.nn.Parameter(torch.tensor(1.0))
+        self.num_src_nodes = num_src_nodes
+        self.num_dst_nodes = num_dst_nodes
     
     def reset_parameters(self) -> None:
         super().reset_parameters()
@@ -29,12 +31,12 @@ class WeightedMatrixFactorization(torch.nn.Module):
 
     def forward(
         self,
-        batch: HeteroData,
-        entity_table: NodeType,
-        ground_truth: Tensor,
-    ) -> Dict[NodeType, Tensor]:
-        batch_size = batch[entity_table].seed_time.size(0)
-        lhs_idx = batch[entity_table].n_id[:batch_size]
-        lhs_embedding = self.lhs(lhs_idx)
-        mat = lhs_embedding @ self.rhs.t() 
-        return torch.sum((1 - mat[ground_truth]) **2) + self.w0(mat[~ground_truth]**2)
+        src_tensor: Tensor,
+        dst_tensor: Tensor,
+    ) -> Tensor:
+        lhs_embedding = self.lhs()
+        rhs_embedding = self.rhs()
+        mask = torch.zeros(self.num_src_nodes, self.num_dst_nodes).to(src_tensor.device)
+        mask[src_tensor][dst_tensor] = 1
+        mat = lhs_embedding @ rhs_embedding.t()
+        return ((1 - mat[mask]) **2).sum() + self.w0*(mat[~mask]**2).sum()

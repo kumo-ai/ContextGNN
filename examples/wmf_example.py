@@ -98,22 +98,18 @@ num_neighbors = [
 
 loader_dict: Dict[str, NeighborLoader] = {}
 dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
+src_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
 num_dst_nodes_dict: Dict[str, int] = {}
 for split in ["train", "val", "test"]:
     table = task.get_table(split)
     table_input = get_link_train_table_input(table, task)
     dst_nodes_dict[split] = table_input.dst_nodes
+    src_nodes_dict[split] = table_input.src_nodes
     num_dst_nodes_dict[split] = table_input.num_dst_nodes
-    loader_dict[split] = NeighborLoader(
-        data,
-        num_neighbors=num_neighbors,
-        time_attr="time",
-        input_nodes=table_input.src_nodes,
-        input_time=table_input.src_time,
-        subgraph_type="bidirectional",
-        batch_size=args.batch_size,
-        temporal_strategy=args.temporal_strategy,
-        shuffle=split == "train",
-        num_workers=args.num_workers,
-        persistent_workers=args.num_workers > 0,
-    )
+
+dst_nodes = torch.cat(dst_nodes_dict["train"][1], dst_nodes_dict["val"][1])
+src_nodes = torch.cat(src_nodes_dict["train"][1], src_nodes_dict["val"][1])
+total_src_nodes = len(torch.unique(src_nodes))
+total_dst_nodes = len(torch.unique(dst_nodes))
+
+train_table = task.get_table("train").df
