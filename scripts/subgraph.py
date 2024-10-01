@@ -128,9 +128,10 @@ for batch in loader_dict["val"]:
 
     seen = np.intersect1d(ground_truth_rhs.cpu().numpy(), rhs.cpu().numpy())
 
-    # Obtain ground truth at validation
+    # Obtain ground truth at validation timestamp
     val_src_batch, val_dst_index = val_sparse_tensor[input_id]
     ratio = len(seen)/len(val_dst_index)
+    val_seen_percent.append(ratio)
 
 test_table = task.get_table('test')
 test_df = test_table.df
@@ -151,9 +152,10 @@ for batch in loader_dict["test"]:
 
     seen = np.intersect1d(ground_truth_rhs.cpu().numpy(), rhs.cpu().numpy())
 
-    # Obtain ground truth at validation
+    # Obtain ground truth at test timestamp
     test_src_batch, test_dst_index = test_sparse_tensor[input_id]
     ratio = len(seen)/len(test_dst_index)
+    test_seen_percent.append(ratio)
 
 
 print(args.dataset, args.task, args.num_layers, sum(val_seen_percent)/len(val_seen_percent), sum(test_seen_percent)/len(test_seen_percent))
