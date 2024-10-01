@@ -275,7 +275,7 @@ def main() -> None:
     parser.add_argument('--task', type=str, default='site-sponsor-run')
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--wd', type=float, default=0.00)
-    parser.add_argument('--batch_size', type=int, default=512)
+    parser.add_argument('--batch_size', type=int, default=1024)
     parser.add_argument('--epochs', type=int, default=200)
     parser.add_argument('--total_anneal_steps', type=int, default=200_000)
     parser.add_argument('--anneal_cap', type=float, default=0.2)
@@ -288,8 +288,11 @@ def main() -> None:
     seed_everything(args.seed)
     p_dims = [200, 600, task.num_dst_nodes]
     model = MultiVAE(p_dims).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3,
-                                 weight_decay=args.wd)
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=1e-3,
+        weight_decay=args.wd,
+    )
     best_val_map = 0.0
     for epoch in range(1, args.epochs + 1):
         train_loss = train(
