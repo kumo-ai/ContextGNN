@@ -48,8 +48,7 @@ parser.add_argument(
     choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--lr", type=float, default=0.001)
-# parser.add_argument("--epochs", type=int, default=10)
-parser.add_argument("--epochs", type=int, default=5)
+parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=128)
 parser.add_argument("--supervision_ratio", type=float, default=0.5)
@@ -171,7 +170,8 @@ def static_data_make_pkey_fkey_graph(
     col_stats_dict = dict()
     # Update src nodes information in HeteroData and col_stats_dict
     src_col_to_stype = {"__const__": stype.numerical}
-    src_df = pd.DataFrame({"__const__": np.ones(len(table_dict[SRC_ENTITY_TABLE]))})
+    src_df = pd.DataFrame(
+        {"__const__": np.ones(len(table_dict[SRC_ENTITY_TABLE]))})
     src_dataset = Dataset(
         df=src_df,
         col_to_stype=src_col_to_stype,
@@ -184,7 +184,8 @@ def static_data_make_pkey_fkey_graph(
 
     # Update dst nodes information in HeteroData and col_stats_dict
     dst_col_to_stype = {"__const__": stype.numerical}
-    dst_df = pd.DataFrame({"__const__": np.ones(len(table_dict[DST_ENTITY_TABLE]))})
+    dst_df = pd.DataFrame(
+        {"__const__": np.ones(len(table_dict[DST_ENTITY_TABLE]))})
     dst_dataset = Dataset(
         df=dst_df,
         col_to_stype=dst_col_to_stype,
@@ -217,6 +218,7 @@ data, col_stats_dict = static_data_make_pkey_fkey_graph(
 num_neighbors = [
     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
 ]
+
 
 def static_get_link_train_table_input(
     transaction_df: pd.DataFrame,
@@ -302,12 +304,14 @@ elif args.model == "hybridgnn":
         channels=args.channels,
         aggr="sum",
         norm="layer_norm",
-        embedding_dim=64,
+        embedding_dim=128,
         torch_frame_model_kwargs={
             "channels": 128,
             "num_layers": args.num_layers,
         },
         is_static=True,
+        src_entity_table=SRC_ENTITY_TABLE,
+        num_src_nodes=NUM_SRC_NODES,
     ).to(device)
 elif args.model == 'shallowrhsgnn':
     model = ShallowRHSGNN(
@@ -386,8 +390,10 @@ def train() -> float:
         global_src_batch = batch[SRC_ENTITY_TABLE].batch[edge_index[0]]
         # global_dst_batch = batch[DST_ENTITY_TABLE].batch[edge_index[1]]
         # NOTE: assert all(global_src_batch == global_dst_batch) is True
-        global_seed_nodes = train_seed_nodes[batch[SRC_ENTITY_TABLE].input_id[global_src_batch]]
-        supervision_seed_node_mask = (global_seed_nodes == global_edge_index[0])
+        global_seed_nodes = train_seed_nodes[
+            batch[SRC_ENTITY_TABLE].input_id[global_src_batch]]
+        supervision_seed_node_mask = (
+            global_seed_nodes == global_edge_index[0])
 
         global_edge_label_index_hash = global_edge_label_index_sample[
             0, :] * NUM_DST_NODES + global_edge_label_index_sample[1, :]
@@ -398,9 +404,8 @@ def train() -> float:
         # edge_label_index_hash
         mask = ~(
             torch.isin(global_edge_index_hash, global_edge_label_index_hash) *
-            supervision_seed_node_mask
-        )
-        
+            supervision_seed_node_mask)
+
         # Apply the mask to filter out the ground truth edges
         edge_index_message_passing = edge_index[:, mask]
 
