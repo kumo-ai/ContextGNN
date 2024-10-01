@@ -1,13 +1,14 @@
 from typing import Any, Dict, List
 
 import torch
-from .nn import HeteroEncoder, HeteroGraphSAGE, HeteroTemporalEncoder
 from torch import Tensor
 from torch.nn import Embedding, ModuleDict
 from torch_frame.data.stats import StatType
 from torch_geometric.data import HeteroData
 from torch_geometric.nn import MLP
 from torch_geometric.typing import NodeType
+
+from .nn import HeteroEncoder, HeteroGraphSAGE, HeteroTemporalEncoder
 
 
 class Model(torch.nn.Module):
@@ -103,8 +104,11 @@ class Model(torch.nn.Module):
             x_dict[node_type] = x_dict[node_type] + rel_time
 
         for node_type, embedding in self.embedding_dict.items():
-            x_dict[node_type] = x_dict[node_type] + embedding(
-                batch[node_type].n_id)
+            ###################################################################
+            if node_type not in {self.src_entity_table, self.dst_entity_table}:
+                x_dict[node_type] = x_dict[node_type] + embedding(
+                    batch[node_type].n_id)
+            ###################################################################
 
         x_dict = self.gnn(
             x_dict,
