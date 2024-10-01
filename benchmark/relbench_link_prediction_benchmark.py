@@ -39,21 +39,21 @@ VAL_LOSS_DELTA = 0.001
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-amazon")
-parser.add_argument("--task", type=str, default="user-item-rate")
+parser.add_argument("--task", type=str, default="user-item-review")
 parser.add_argument(
     "--model",
     type=str,
     default="hybridgnn",
     choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
 )
-parser.add_argument("--epochs", type=int, default=20)
-parser.add_argument("--num_trials", type=int, default=50,
+parser.add_argument("--epochs", type=int, default=10)
+parser.add_argument("--num_trials", type=int, default=10,
                     help="Number of Optuna-based hyper-parameter tuning.")
 parser.add_argument(
-    "--num_repeats", type=int, default=5,
+    "--num_repeats", type=int, default=2,
     help="Number of repeated training and eval on the best config.")
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
-parser.add_argument("--num_layers", type=int, default=2)
+parser.add_argument("--num_layers", type=int, default=6)
 parser.add_argument("--num_neighbors", type=int, default=128)
 parser.add_argument("--temporal_strategy", type=str, default="last",
                     choices=["last", "uniform"])
@@ -120,10 +120,10 @@ if args.model == "idgnn":
     model_cls = IDGNN
 elif args.model in ["hybridgnn", "shallowrhsgnn"]:
     model_search_space = {
-        "encoder_channels": [32, 64, 128, 256, 512],
+        "encoder_channels": [32, 64, 128, 256],
         "encoder_layers": [2, 4, 8],
-        "channels": [32, 64, 128, 256, 512],
-        "embedding_dim": [32, 64, 128, 256, 512],
+        "channels": [32, 64, 128, 256],
+        "embedding_dim": [32, 64, 128, 256],
         "norm": ["layer_norm", "batch_norm"],
         "rhs_emb_mode": [
             RHSEmbeddingMode.FUSION, RHSEmbeddingMode.FEATURE,
@@ -131,7 +131,7 @@ elif args.model in ["hybridgnn", "shallowrhsgnn"]:
         ]
     }
     train_search_space = {
-        "batch_size": [256, 512, 1024],
+        "batch_size": [256, 512],
         "base_lr": [0.001, 0.01],
         "gamma_rate": [0.8, 1.],
     }
