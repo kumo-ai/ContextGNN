@@ -24,7 +24,6 @@ from torch_geometric.loader import NeighborLoader
 from torch_geometric.seed import seed_everything
 from torch_geometric.typing import NodeType
 
-
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-hm")
 parser.add_argument("--task", type=str, default="user-item-purchase")
@@ -34,7 +33,7 @@ parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=64)
 parser.add_argument("--channels", type=int, default=512)
 parser.add_argument("--aggr", type=str, default="sum")
-parser.add_argument("--num_layers", type=int, default=6)
+parser.add_argument("--num_layers", type=int, default=2)
 parser.add_argument("--num_neighbors", type=int, default=128)
 parser.add_argument("--temporal_strategy", type=str, default="last")
 parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
@@ -45,6 +44,7 @@ parser.add_argument("--cache_dir", type=str,
 args = parser.parse_args()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = 'cpu'
 if torch.cuda.is_available():
     torch.set_num_threads(1)
 seed_everything(args.seed)
@@ -76,9 +76,7 @@ data, col_stats_dict = make_pkey_fkey_graph(
     cache_dir=f"{args.cache_dir}/{args.dataset}/materialized",
 )
 
-num_neighbors = [
-            -1 for i in range(args.num_layers)
-            ]
+num_neighbors = [-1 for i in range(args.num_layers)]
 
 loader_dict: Dict[str, NeighborLoader] = {}
 dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
@@ -112,56 +110,66 @@ train_sparse_tensor = SparseTensor(dst_nodes_dict["train"][1], device=device)
 val_sparse_tensor = SparseTensor(dst_nodes_dict["val"][1], device=device)
 test_sparse_tensor = SparseTensor(dst_nodes_dict["test"][1], device=device)
 
+score = num_examples = 0
 for batch in loader_dict["val"]:
-    batch.to(device)
+    # batch.to(device)
 
     rhs = batch[task.dst_entity_table].n_id
     rhs_batch = batch[task.dst_entity_table].batch
+    batch_size = batch[task.src_entity_table].batch_size
 
     input_id = batch[task.src_entity_table].input_id
     # Obtain ground truth seen during training
-    train_src_batch, train_dst_index = train_sparse_tensor[input_id]
-
-    # map to 1d-vectors
-    rhs = rhs_batch * num_rhs_nodes + rhs
-    ground_truth_rhs = train_src_batch * num_rhs_nodes + train_dst_index
-
-    seen, x_id, _ = np.intersect1d(ground_truth_rhs.cpu().numpy(), rhs.cpu().numpy(), return_indices=True)
-
-    # Obtain ground truth at validation timestamp
     val_src_batch, val_dst_index = val_sparse_tensor[input_id]
 
-    seen = np.intersect1d(seen - (train_src_batch[x_id] * num_rhs_nodes).cpu().numpy(), torch.unique(val_dst_index).cpu().numpy())
-
-    ratio = len(seen)/len(val_dst_index)
-    val_seen_percent.append(ratio)
-
-test_table = task.get_table('test')
-test_df = test_table.df
-test_seen_percent = []
-for batch in loader_dict["test"]:
-    batch.to(device)
-
-    rhs = batch[task.dst_entity_table].n_id
-    rhs_batch = batch[task.dst_entity_table].batch
-
-    input_id = batch[task.src_entity_table].input_id
-    # Obtain ground truth seen during training
-    train_src_batch, train_dst_index = train_sparse_tensor[input_id]
-
     # map to 1d-vectors
     rhs = rhs_batch * num_rhs_nodes + rhs
-    ground_truth_rhs = train_src_batch * num_rhs_nodes + train_dst_index
+    ground_truth_rhs = val_src_batch * num_rhs_nodes + val_dst_index
 
-    seen, x_id, _ = np.intersect1d(ground_truth_rhs.cpu().numpy(), rhs.cpu().numpy(), return_indices=True)
+    seen = torch.isin(ground_truth_rhs, rhs).long()
 
-    # Obtain ground truth at test timestamp
-    test_src_batch, test_dst_index = test_sparse_tensor[input_id]
+    from torch_scatter import scatter_add
+    ground_truth_count = scatter_add(torch.ones_like(val_src_batch),
+                                     val_src_batch, dim_size=batch_size)
 
-    seen = np.intersect1d(seen - (train_src_batch[x_id] * num_rhs_nodes).cpu().numpy(), torch.unique(test_dst_index).cpu().numpy())
+    seen = scatter_add(seen.long(), val_src_batch, dim_size=batch_size)
 
-    ratio = len(seen)/len(test_dst_index)
-    test_seen_percent.append(ratio)
+    score += (seen / ground_truth_count).sum().item()
+    num_examples += batch_size
 
+print(args.dataset, args.task, args.num_layers)
+print(score / num_examples)
 
-print(args.dataset, args.task, args.num_layers, sum(val_seen_percent)/len(val_seen_percent), sum(test_seen_percent)/len(test_seen_percent))
+# test_table = task.get_table('test')
+# test_df = test_table.df
+# test_seen_percent = []
+# for batch in loader_dict["test"]:
+#     batch.to(device)
+
+#     rhs = batch[task.dst_entity_table].n_id
+#     rhs_batch = batch[task.dst_entity_table].batch
+
+#     input_id = batch[task.src_entity_table].input_id
+#     # Obtain ground truth seen during training
+#     train_src_batch, train_dst_index = train_sparse_tensor[input_id]
+
+#     # map to 1d-vectors
+#     rhs = rhs_batch * num_rhs_nodes + rhs
+#     ground_truth_rhs = train_src_batch * num_rhs_nodes + train_dst_index
+
+#     seen, x_id, _ = np.intersect1d(ground_truth_rhs.cpu().numpy(),
+#                                    rhs.cpu().numpy(), return_indices=True)
+
+#     # Obtain ground truth at test timestamp
+#     test_src_batch, test_dst_index = test_sparse_tensor[input_id]
+
+#     seen = np.intersect1d(
+#         seen - (train_src_batch[x_id] * num_rhs_nodes).cpu().numpy(),
+#         torch.unique(test_dst_index).cpu().numpy())
+
+#     ratio = len(seen) / len(test_dst_index)
+#     test_seen_percent.append(ratio)
+
+# print(args.dataset, args.task, args.num_layers,
+#       sum(val_seen_percent) / len(val_seen_percent),
+#       sum(test_seen_percent) / len(test_seen_percent))
