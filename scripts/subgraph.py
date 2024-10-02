@@ -76,7 +76,9 @@ data, col_stats_dict = make_pkey_fkey_graph(
     cache_dir=f"{args.cache_dir}/{args.dataset}/materialized",
 )
 
-num_neighbors = [-1 for i in range(args.num_layers)]
+num_neighbors = [
+    int(args.num_neighbors // 2**i) for i in range(args.num_layers)
+]
 
 loader_dict: Dict[str, NeighborLoader] = {}
 dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
