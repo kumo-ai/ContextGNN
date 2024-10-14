@@ -30,8 +30,8 @@ from torch_geometric.typing import NodeType
 from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from tqdm import tqdm
 
-from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN
-from hybridgnn.utils import GloveTextEmbedding, RHSEmbeddingMode
+from contextgnn.nn.models import IDGNN, ContextGNN, ShallowRHSGNN
+from contextgnn.utils import GloveTextEmbedding, RHSEmbeddingMode
 
 TRAIN_CONFIG_KEYS = ["batch_size", "gamma_rate", "base_lr"]
 LINK_PREDICTION_METRIC = "link_prediction_map"
@@ -43,8 +43,8 @@ parser.add_argument("--task", type=str, default="user-item-rate")
 parser.add_argument(
     "--model",
     type=str,
-    default="hybridgnn",
-    choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
+    default="contextgnn",
+    choices=["contextgnn", "idgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--num_trials", type=int, default=50,
@@ -103,7 +103,7 @@ num_neighbors = [
     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
 ]
 
-model_cls: Type[Union[IDGNN, HybridGNN, ShallowRHSGNN]]
+model_cls: Type[Union[IDGNN, ContextGNN, ShallowRHSGNN]]
 
 if args.model == "idgnn":
     model_search_space = {
@@ -118,7 +118,7 @@ if args.model == "idgnn":
         "gamma_rate": [0.9, 0.95, 1.],
     }
     model_cls = IDGNN
-elif args.model in ["hybridgnn", "shallowrhsgnn"]:
+elif args.model in ["contextgnn", "shallowrhsgnn"]:
     model_search_space = {
         "encoder_channels": [32, 64, 128, 256, 512],
         "encoder_layers": [2, 4, 8],
@@ -135,7 +135,7 @@ elif args.model in ["hybridgnn", "shallowrhsgnn"]:
         "base_lr": [0.001, 0.01],
         "gamma_rate": [0.8, 1.],
     }
-    model_cls = (HybridGNN if args.model == "hybridgnn" else ShallowRHSGNN)
+    model_cls = (ContextGNN if args.model == "contextgnn" else ShallowRHSGNN)
 
 
 def train(
@@ -173,7 +173,7 @@ def train(
 
             loss = F.binary_cross_entropy_with_logits(out, target)
             numel = out.numel()
-        elif args.model in ["hybridgnn", "shallowrhsgnn"]:
+        elif args.model in ["contextgnn", "shallowrhsgnn"]:
             logits = model(batch, task.src_entity_table, task.dst_entity_table)
             edge_label_index = torch.stack([src_batch, dst_index], dim=0)
             loss = sparse_cross_entropy(logits, edge_label_index)
@@ -214,7 +214,7 @@ def test(model: torch.nn.Module, loader: NeighborLoader, stage: str) -> float:
                                  device=out.device)
             scores[batch[task.dst_entity_table].batch,
                    batch[task.dst_entity_table].n_id] = torch.sigmoid(out)
-        elif args.model in ["hybridgnn", "shallowrhsgnn"]:
+        elif args.model in ["contextgnn", "shallowrhsgnn"]:
             # Get ground-truth
             out = model(batch, task.src_entity_table,
                         task.dst_entity_table).detach()
@@ -257,7 +257,7 @@ def train_and_eval_with_cfg(
             persistent_workers=args.num_workers > 0,
         )
 
-    if args.model in ["hybridgnn", "shallowrhsgnn"]:
+    if args.model in ["contextgnn", "shallowrhsgnn"]:
         model_cfg["num_nodes"] = num_dst_nodes_dict["train"]
         model_cfg["dst_entity_table"] = task.dst_entity_table
     elif args.model == "idgnn":

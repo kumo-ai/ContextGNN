@@ -19,7 +19,7 @@ from contextgnn.nn.models.rhsembeddinggnn import RHSEmbeddingGNN
 from contextgnn.utils import RHSEmbeddingMode
 
 
-class HybridGNN(RHSEmbeddingGNN):
+class ContextGNN(RHSEmbeddingGNN):
     r"""Implementation of HybridGNN model."""
     def __init__(
         self,

@@ -11,8 +11,8 @@ from relbench.tasks.amazon import UserItemPurchaseTask
 from torch_frame.config.text_embedder import TextEmbedderConfig
 from torch_frame.testing.text_embedder import HashTextEmbedder
 
-from hybridgnn.nn.rhs_embedding import RHSEmbedding
-from hybridgnn.utils import RHSEmbeddingMode
+from contextgnn.nn.rhs_embedding import RHSEmbedding
+from contextgnn.utils import RHSEmbeddingMode
 
 
 @pytest.mark.parametrize('emb_mode', list(RHSEmbeddingMode))
