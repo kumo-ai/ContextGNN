@@ -35,9 +35,20 @@ class HybridGNN(RHSEmbeddingGNN):
         norm: str = 'layer_norm',
         torch_frame_model_cls: Type[torch.nn.Module] = ResNet,
         torch_frame_model_kwargs: Optional[Dict[str, Any]] = None,
+        is_static: Optional[bool] = False,
+        num_src_nodes: Optional[int] = None,
+        src_entity_table: Optional[str] = None,
     ) -> None:
-        super().__init__(data, col_stats_dict, rhs_emb_mode, dst_entity_table,
-                         num_nodes, embedding_dim)
+        super().__init__(
+            data,
+            col_stats_dict,
+            rhs_emb_mode,
+            dst_entity_table,
+            num_nodes,
+            embedding_dim,
+            num_src_nodes,
+            src_entity_table,
+        )
 
         self.encoder = HeteroEncoder(
             channels=channels,
@@ -76,6 +87,7 @@ class HybridGNN(RHSEmbeddingGNN):
         self.lin_offset_idgnn = torch.nn.Linear(embedding_dim, 1)
         self.lin_offset_embgnn = torch.nn.Linear(embedding_dim, 1)
         self.channels = channels
+        self.is_static = is_static
 
         self.reset_parameters()
 
@@ -90,6 +102,8 @@ class HybridGNN(RHSEmbeddingGNN):
         self.lin_offset_embgnn.reset_parameters()
         self.lin_offset_idgnn.reset_parameters()
         self.lhs_projector.reset_parameters()
+        if self.lhs_embedding is not None:
+            self.lhs_embedding.reset_parameters()
 
     def forward(
         self,
@@ -100,14 +114,20 @@ class HybridGNN(RHSEmbeddingGNN):
         seed_time = batch[entity_table].seed_time
         x_dict = self.encoder(batch.tf_dict)
 
+        if self.lhs_embedding is not None:
+            lhs_embedding = self.lhs_embedding()[batch[entity_table].n_id]
+            x_dict[entity_table] = lhs_embedding
+
         # Add ID-awareness to the root node
         x_dict[entity_table][:seed_time.size(0
                                              )] += self.id_awareness_emb.weight
-        rel_time_dict = self.temporal_encoder(seed_time, batch.time_dict,
-                                              batch.batch_dict)
 
-        for node_type, rel_time in rel_time_dict.items():
-            x_dict[node_type] = x_dict[node_type] + rel_time
+        if not self.is_static:
+            rel_time_dict = self.temporal_encoder(seed_time, batch.time_dict,
+                                                  batch.batch_dict)
+
+            for node_type, rel_time in rel_time_dict.items():
+                x_dict[node_type] = x_dict[node_type] + rel_time
 
         x_dict = self.gnn(
             x_dict,

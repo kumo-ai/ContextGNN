@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import torch
 from torch_frame.data.stats import StatType
@@ -19,6 +19,8 @@ class RHSEmbeddingGNN(torch.nn.Module):
         dst_entity_table: str,
         num_nodes: int,
         embedding_dim: int,
+        num_src_nodes: Optional[int] = None,
+        src_entity_table: Optional[str] = None,
     ):
         super().__init__()
         stype_encoder_dict = {
@@ -36,19 +38,47 @@ class RHSEmbeddingGNN(torch.nn.Module):
             feat=data[dst_entity_table]['tf'],
         )
 
+        self.lhs_embedding = None
+        if num_src_nodes is not None:
+            assert src_entity_table is not None
+
+            src_stype_encoder_dict = {
+                k: v[0]()
+                for k, v in DEFAULT_STYPE_ENCODER_DICT.items()
+                if k in data[src_entity_table]['tf'].col_names_dict.keys()
+            }
+
+            self.lhs_embedding = RHSEmbedding(
+                emb_mode=rhs_emb_mode,
+                embedding_dim=embedding_dim,
+                num_nodes=num_src_nodes,
+                col_stats=col_stats_dict[src_entity_table],
+                col_names_dict=data[src_entity_table]['tf'].col_names_dict,
+                stype_encoder_dict=src_stype_encoder_dict,
+                feat=data[src_entity_table]['tf'],
+            )
+
     def reset_parameters(self):
         self.rhs_embedding.reset_parameters()
+        if self.lhs_embedding is not None:
+            self.lhs_embedding.reset_parameters()
 
     def to(self, *args, **kwargs) -> Self:
         # Explicitly call `to` on the RHS embedding to move caches to the
         # device.
         self.rhs_embedding.to(*args, **kwargs)
+        if self.lhs_embedding is not None:
+            self.lhs_embedding.to(*args, **kwargs)
         return super().to(*args, **kwargs)
 
     def cpu(self) -> Self:
         self.rhs_embedding.cpu()
+        if self.lhs_embedding is not None:
+            self.lhs_embedding.cpu()
         return super().cpu()
 
     def cuda(self, *args, **kwargs) -> Self:
         self.rhs_embedding.cuda(*args, **kwargs)
+        if self.lhs_embedding is not None:
+            self.lhs_embedding.cuda(*args, **kwargs)
         return super().cuda(*args, **kwargs)

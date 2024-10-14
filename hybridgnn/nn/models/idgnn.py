@@ -29,6 +29,7 @@ class IDGNN(torch.nn.Module):
         norm: str = 'layer_norm',
         torch_frame_model_cls: Type[torch.nn.Module] = ResNet,
         torch_frame_model_kwargs: Optional[Dict[str, Any]] = None,
+        is_static=True,
     ) -> None:
         super().__init__()
 
@@ -65,6 +66,7 @@ class IDGNN(torch.nn.Module):
         )
 
         self.id_awareness_emb = torch.nn.Embedding(1, channels)
+        self.is_static = is_static
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
@@ -85,11 +87,12 @@ class IDGNN(torch.nn.Module):
         # Add ID-awareness to the root node
         x_dict[entity_table][:seed_time.size(0
                                              )] += self.id_awareness_emb.weight
-        rel_time_dict = self.temporal_encoder(seed_time, batch.time_dict,
-                                              batch.batch_dict)
+        if not self.is_static:
+            rel_time_dict = self.temporal_encoder(seed_time, batch.time_dict,
+                                                  batch.batch_dict)
 
-        for node_type, rel_time in rel_time_dict.items():
-            x_dict[node_type] = x_dict[node_type] + rel_time
+            for node_type, rel_time in rel_time_dict.items():
+                x_dict[node_type] = x_dict[node_type] + rel_time
 
         x_dict = self.gnn(
             x_dict,
