@@ -11,7 +11,7 @@ from torch_frame.config.text_embedder import TextEmbedderConfig
 from torch_frame.testing.text_embedder import HashTextEmbedder
 from torch_geometric.loader import NeighborLoader
 
-from contextgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN
+from contextgnn.nn.models import IDGNN, ContextGNN, ShallowRHSGNN
 from contextgnn.utils import RHSEmbeddingMode
 
 
@@ -102,7 +102,7 @@ def test_contextgnn(tmp_path, emb_mode):
 
     channels = 16
     embedding_dim = 8
-    model = HybridGNN(
+    model = ContextGNN(
         data=data,
         col_stats_dict=col_stats_dict,
         rhs_emb_mode=emb_mode,
