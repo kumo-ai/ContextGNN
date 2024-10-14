@@ -11,8 +11,8 @@ from torch_frame.config.text_embedder import TextEmbedderConfig
 from torch_frame.testing.text_embedder import HashTextEmbedder
 from torch_geometric.loader import NeighborLoader
 
-from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN
-from hybridgnn.utils import RHSEmbeddingMode
+from contextgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN
+from contextgnn.utils import RHSEmbeddingMode
 
 
 def test_idgnn(tmp_path):
@@ -67,7 +67,7 @@ def test_idgnn(tmp_path):
 
 
 @pytest.mark.parametrize('emb_mode', list(RHSEmbeddingMode))
-def test_hybridgnn(tmp_path, emb_mode):
+def test_contextgnn(tmp_path, emb_mode):
     dataset = FakeDataset()
 
     db = dataset.get_db()
