@@ -1,4 +1,4 @@
-name: Testing PyTorch 2.2
+name: Testing PyTorch 2.3
 
 on:  # yamllint disable-line rule:truthy
   push:
@@ -27,15 +27,19 @@ jobs:
 
       - name: Install PyTorch
         run: |
-          python3 -m pip install torch==2.3.0 --extra-index-url https://download.pytorch.org/whl/cpu --break-system-packages
+          python3 -m venv .venv
+          source .venv/bin/activate
+          python3 -m pip install torch==2.3.0 --extra-index-url https://download.pytorch.org/whl/cpu
           python3 -m pip install --no-index pyg-lib==0.4.0 -f https://data.pyg.org/whl/torch-2.3.0+cpu.html
 
       - name: Install main package
         run: |
+          source .venv/bin/activate
           pip install -e .[full,test]
 
       - name: Run tests
         run: |
+          source .venv/bin/activate
           pytest --cov --cov-report=xml
 
       - name: Upload coverage
