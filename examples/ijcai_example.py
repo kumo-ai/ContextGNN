@@ -1,15 +1,14 @@
-import pickle
 import argparse
 import os.path as osp
-from typing import Dict, List, Tuple
-from torch_geometric.data import HeteroData
-from torch_frame import stype
-import torch
-from torch_geometric.loader import NeighborLoader
+import pickle
+from typing import Dict, Tuple
+
 import numpy as np
 import scipy.sparse as sp
+import torch
 from torch import Tensor
 from torch_frame import stype
+from torch_geometric.data import HeteroData
 from torch_geometric.loader import NeighborLoader
 from torch_geometric.seed import seed_everything
 from torch_geometric.typing import NodeType
@@ -42,12 +41,12 @@ path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data',
                 'ijcai-contest')
 behs = ['click', 'fav', 'cart', 'buy']
 
-
 data = HeteroData()
+
 
 def create_edge(data, behavior, beh_idx, pkey_name, pkey_idx):
     # fkey -> pkey edges
-    edge_index = torch.stack([beh_idx, pkey_idx],dim=0)
+    edge_index = torch.stack([beh_idx, pkey_idx], dim=0)
     edge_type = (behavior, f"f2p_{behavior}", pkey_name)
     data[edge_type].edge_index = sort_edge_index(edge_index)
 
@@ -57,9 +56,10 @@ def create_edge(data, behavior, beh_idx, pkey_name, pkey_idx):
     edge_type = (pkey_name, f"rev_f2p_{behavior}", behavior)
     data[edge_type].edge_index = sort_edge_index(edge_index)
 
+
 for i in range(len(behs)):
     behavior = behs[i]
-    with open(osp.join(path, 'trn_'+behavior), 'rb') as fs:
+    with open(osp.join(path, 'trn_' + behavior), 'rb') as fs:
         mat = pickle.load(fs)
     if i == 0:
         data['user'].x = torch.tensor(np.ones(mat.shape[0])).view(-1, 1)
@@ -79,7 +79,6 @@ loader_dict: Dict[str, NeighborLoader] = {}
 dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
 num_dst_nodes_dict: Dict[str, int] = {}
 for split in ["train", "val", "test"]:
-
     dst_nodes_dict[split] = table_input.dst_nodes
     num_dst_nodes_dict[split] = table_input.num_dst_nodes
     loader_dict[split] = NeighborLoader(
