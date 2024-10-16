@@ -29,7 +29,7 @@ parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=512)
 parser.add_argument("--channels", type=int, default=128)
 parser.add_argument("--aggr", type=str, default="sum")
-parser.add_argument("--num_layers", type=int, default=4)
+parser.add_argument("--num_layers", type=int, default=2)
 parser.add_argument("--num_neighbors", type=int, default=128)
 parser.add_argument("--temporal_strategy", type=str, default="last")
 parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
@@ -64,12 +64,18 @@ for i in range(len(behs)):
     if i == 0:
         data['user'].x = torch.tensor(np.ones(mat.shape[0])).view(-1, 1)
         data['item'].x = torch.tensor(np.ones(mat.shape[1])).view(-1, 1)
+        data['user'].n_id = torch.arange(mat.shape[0], dtype=torch.long)
+        data['item'].n_id = torch.arange(mat.shape[1], dtype=torch.long)
     col_to_stype = {"time": stype.timestamp}
-    data[behavior].x = torch.tensor(mat.data)
+    data[behavior].time = torch.tensor(mat.data, dtype=torch.long)
+    data[behavior].x = torch.tensor(np.ones(len(mat.data))).view(-1, 1)
+    data[behavior].n_id = torch.arange(len(mat.data), dtype=torch.long)
     coo_mat = sp.coo_matrix(mat)
-    beh_idx = torch.arange(len(coo_mat.data))
-    create_edge(data, behavior, beh_idx, 'user', torch.tensor(coo_mat.row))
-    create_edge(data, behavior, beh_idx, 'item', torch.tensor(coo_mat.col))
+    beh_idx = torch.arange(len(coo_mat.data), dtype=torch.long)
+    create_edge(data, behavior, beh_idx, 'user',
+                torch.tensor(coo_mat.row, dtype=torch.long))
+    create_edge(data, behavior, beh_idx, 'item',
+                torch.tensor(coo_mat.col, dtype=torch.long))
 
 num_neighbors = [
     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
@@ -79,14 +85,13 @@ loader_dict: Dict[str, NeighborLoader] = {}
 dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
 num_dst_nodes_dict: Dict[str, int] = {}
 for split in ["train", "val", "test"]:
-    dst_nodes_dict[split] = table_input.dst_nodes
-    num_dst_nodes_dict[split] = table_input.num_dst_nodes
+    num_src_nodes = data['user'].num_nodes
     loader_dict[split] = NeighborLoader(
         data,
         num_neighbors=num_neighbors,
         time_attr="time",
-        input_nodes='user',
-        input_time=table_input.src_time,
+        input_nodes=('user', torch.arange(num_src_nodes, dtype=torch.long)),
+        input_time=torch.full((num_src_nodes, ), 1111, dtype=torch.long),
         subgraph_type="bidirectional",
         batch_size=args.batch_size,
         temporal_strategy=args.temporal_strategy,

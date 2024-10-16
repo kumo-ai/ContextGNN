@@ -182,6 +182,8 @@ def train() -> float:
     sparse_tensor = SparseTensor(dst_nodes_dict["train"][1], device=device)
     for batch in tqdm(loader_dict["train"], total=total_steps, desc="Train"):
         batch = batch.to(device)
+        import pdb
+        pdb.set_trace()
 
         # Get ground-truth
         input_id = batch[task.src_entity_table].input_id
