@@ -9,6 +9,7 @@ import pandas as pd
 import scipy.sparse as sp
 import torch
 import torch.nn.functional as F
+from relbench.modeling.loader import SparseTensor
 from torch import Tensor
 from torch_frame import stype
 from torch_frame.data import Dataset
@@ -17,19 +18,18 @@ from torch_geometric.loader import NeighborLoader
 from torch_geometric.seed import seed_everything
 from torch_geometric.typing import NodeType
 from torch_geometric.utils import sort_edge_index
+from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from tqdm import tqdm
 
 from contextgnn.nn.models import IDGNN, ContextGNN, ShallowRHSGNN
 from contextgnn.utils import RHSEmbeddingMode
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="rel-ijcai")
-parser.add_argument("--task", type=str, default="user-item-purchase")
 parser.add_argument(
     "--model",
     type=str,
-    default="hybridgnn",
-    choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
+    default="contextgnn",
+    choices=["contextgnn", "idgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--epochs", type=int, default=20)
@@ -73,13 +73,22 @@ def create_edge(data, behavior, beh_idx, pkey_name, pkey_idx):
 
 
 col_stats_dict = {}
+dst_nodes = None
 for i in range(len(behs)):
     behavior = behs[i]
     with open(osp.join(path, 'trn_' + behavior), 'rb') as fs:
         mat = pickle.load(fs)
     if i == 0:
-        data['user'].x = torch.tensor(np.ones(mat.shape[0])).view(-1, 1)
-        data['item'].x = torch.tensor(np.ones(mat.shape[1])).view(-1, 1)
+        dataset = Dataset(pd.DataFrame({"__const__": np.ones(mat.shape[0])}),
+                          col_to_stype={"__const__": stype.numerical})
+        dataset.materialize()
+        data['user'].tf = dataset.tensor_frame
+        col_stats_dict['user'] = dataset.col_stats
+        dataset = Dataset(pd.DataFrame({"__const__": np.ones(mat.shape[1])}),
+                          col_to_stype={"__const__": stype.numerical})
+        dataset.materialize()
+        data['item'].tf = dataset.tensor_frame
+        col_stats_dict['item'] = dataset.col_stats
         data['user'].n_id = torch.arange(mat.shape[0], dtype=torch.long)
         data['item'].n_id = torch.arange(mat.shape[1], dtype=torch.long)
     col_to_stype = {"time": stype.timestamp}
@@ -92,6 +101,8 @@ for i in range(len(behs)):
     data[behavior].x = torch.tensor(np.ones(len(mat.data))).view(-1, 1)
     data[behavior].n_id = torch.arange(len(mat.data), dtype=torch.long)
     coo_mat = sp.coo_matrix(mat)
+    if behavior == 'buy':
+        dst_nodes = coo_mat
     beh_idx = torch.arange(len(coo_mat.data), dtype=torch.long)
     create_edge(data, behavior, beh_idx, src_entity_table,
                 torch.tensor(coo_mat.row, dtype=torch.long))
@@ -104,7 +115,6 @@ num_neighbors = [
 
 loader_dict: Dict[str, NeighborLoader] = {}
 dst_nodes_dict: Dict[str, Tuple[NodeType, Tensor]] = {}
-num_dst_nodes_dict: Dict[str, int] = {}
 split_date: Dict[str, int] = {}
 split_date['train'] = 1103
 split_date['val'] = 1110
@@ -114,6 +124,11 @@ num_src_nodes = data[src_entity_table].num_nodes
 num_dst_nodes = data[dst_entity_table].num_nodes
 
 for split in ["train", "val", "test"]:
+    dst_nodes_data = dst_nodes.data <= split_date[split]
+    dst_nodes_dict[split] = torch.sparse_coo_tensor(
+        torch.stack([torch.tensor(dst_nodes.row),
+                     torch.tensor(dst_nodes.col)]), dst_nodes_data,
+        size=dst_nodes.shape).to_sparse_csr()
     loader_dict[split] = NeighborLoader(
         data,
         num_neighbors=num_neighbors,
@@ -151,7 +166,7 @@ elif args.model == "contextgnn":
         col_stats_dict=col_stats_dict,
         rhs_emb_mode=RHSEmbeddingMode.FUSION,
         dst_entity_table=dst_entity_table,
-        num_nodes=num_dst_nodes_dict["train"],
+        num_nodes=num_dst_nodes,
         num_layers=args.num_layers,
         channels=args.channels,
         aggr="sum",
@@ -168,7 +183,7 @@ elif args.model == 'shallowrhsgnn':
         col_stats_dict=col_stats_dict,
         rhs_emb_mode=RHSEmbeddingMode.FUSION,
         dst_entity_table='item',
-        num_nodes=num_dst_nodes_dict["train"],
+        num_nodes=num_dst_nodes,
         num_layers=args.num_layers,
         channels=args.channels,
         aggr="sum",
@@ -191,12 +206,12 @@ def train() -> float:
     loss_accum = count_accum = 0
     steps = 0
     total_steps = min(len(loader_dict["train"]), args.max_steps_per_epoch)
-    sparse_tensor = SparseTensor(dst_nodes_dict["train"][1], device=device)
+    sparse_tensor = SparseTensor(dst_nodes_dict["train"], device=device)
     for batch in tqdm(loader_dict["train"], total=total_steps, desc="Train"):
         batch = batch.to(device)
 
         # Get ground-truth
-        input_id = batch['item'].input_id
+        input_id = batch['user'].input_id
         src_batch, dst_index = sparse_tensor[input_id]
 
         # Optimization
@@ -273,6 +288,8 @@ for epoch in range(1, args.epochs + 1):
     train_loss = train()
     if epoch % args.eval_epochs_interval == 0:
         val_pred = test(loader_dict["val"], desc="Val")
+        import pdb
+        pdb.set_trace()
         val_metrics = task.evaluate(val_pred, task.get_table("val"))
         print(f"Epoch: {epoch:02d}, Train loss: {train_loss}, "
               f"Val metrics: {val_metrics}")
