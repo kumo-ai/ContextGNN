@@ -34,11 +34,11 @@ parser.add_argument(
 parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--epochs", type=int, default=10)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
-parser.add_argument("--batch_size", type=int, default=128)
-parser.add_argument("--channels", type=int, default=64)
+parser.add_argument("--batch_size", type=int, default=512)
+parser.add_argument("--channels", type=int, default=128)
 parser.add_argument("--aggr", type=str, default="sum")
-parser.add_argument("--num_layers", type=int, default=6)
-parser.add_argument("--num_neighbors", type=int, default=64)
+parser.add_argument("--num_layers", type=int, default=2)
+parser.add_argument("--num_neighbors", type=int, default=128)
 parser.add_argument("--temporal_strategy", type=str, default="last")
 parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
 parser.add_argument("--num_workers", type=int, default=0)
@@ -211,8 +211,8 @@ elif args.model == "contextgnn":
         norm="layer_norm",
         embedding_dim=64,
         torch_frame_model_kwargs={
-            "channels": 64,
-            "num_layers": 2,
+            "channels": 128,
+            "num_layers": 4,
         },
     ).to(device)
 elif args.model == 'shallowrhsgnn':
