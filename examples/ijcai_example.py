@@ -102,6 +102,8 @@ def calculate_hit_rate_on_sparse_target(pred: torch.Tensor,
         # Get the ground truth indices for this row
         row_start = crow_indices[i].item()
         row_end = crow_indices[i + 1].item()
+        assert isinstance(row_start, int)
+        assert isinstance(row_end, int)
         dst_indices = col_indices[row_start:row_end]
         bool_indices = values[row_start:row_end]
         true_indices = dst_indices[bool_indices]
