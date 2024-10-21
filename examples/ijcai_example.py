@@ -103,7 +103,7 @@ def calculate_hit_rate_on_sparse_target(pred: torch.Tensor,
         row_end = crow_indices[i + 1].item()
         dst_indices = col_indices[row_start:row_end]
         bool_indices = values[row_start:row_end]
-        true_indices = dst_indices[bool_indices].tolist()
+        true_indices = dst_indices[bool_indices]
 
         # Check if any of the predicted values match the true indices
         pred_indices = pred[i]
