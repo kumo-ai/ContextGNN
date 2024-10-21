@@ -2,7 +2,7 @@ import argparse
 import os.path as osp
 import pickle
 import warnings
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Union
 
 import numpy as np
 import pandas as pd
@@ -16,7 +16,6 @@ from torch_frame.data import Dataset
 from torch_geometric.data import HeteroData
 from torch_geometric.loader import NeighborLoader
 from torch_geometric.seed import seed_everything
-from torch_geometric.typing import NodeType
 from torch_geometric.utils import sort_edge_index
 from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from tqdm import tqdm
@@ -40,7 +39,7 @@ parser.add_argument("--aggr", type=str, default="sum")
 parser.add_argument("--num_layers", type=int, default=2)
 parser.add_argument("--num_neighbors", type=int, default=128)
 parser.add_argument("--temporal_strategy", type=str, default="last")
-parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
+parser.add_argument("--max_steps_per_epoch", type=int, default=2)
 parser.add_argument("--num_workers", type=int, default=0)
 parser.add_argument("--eval_k", type=int, default=10)
 parser.add_argument("--seed", type=int, default=42)
@@ -62,6 +61,15 @@ data = HeteroData()
 
 
 def calculate_hit_rate(pred, target):
+    r"""This function calculates hit_rate
+    Args:
+        pred (torch.Tensor): Prediction tensor of size (num_entity,
+            num_target_predicitons_per_entity).
+        target (List[int]): A list of shape num_entity, where the
+            value is None if user doesn't have a next best action.
+            The value is the dst node id if there is a next best
+            action.
+    """
     hits = 0
     total = 0
     for i in range(len(target)):
@@ -70,13 +78,15 @@ def calculate_hit_rate(pred, target):
             if target[i] in pred[i]:
                 hits += 1
 
-    return hits/total
+    return hits / total
+
 
 def calculate_hit_rate_on_sparse_target(pred, target):
-    crow_indices = dst_nodes_dict['val'].crow_indices()
-    col_indices = dst_nodes_dict['val'].col_indices()
-    values = dst_nodes_dict['val'].values()
-
+    crow_indices = target.crow_indices()
+    col_indices = target.col_indices()
+    values = target.values()
+    import pdb
+    pdb.set_trace()
     # Iterate through each row and check if predictions match ground truth
     hits = 0
     num_rows = val_pred.shape[0]
@@ -86,9 +96,9 @@ def calculate_hit_rate_on_sparse_target(pred, target):
         row_start = crow_indices[i].item()
         row_end = crow_indices[i + 1].item()
         true_indices = col_indices[row_start:row_end].tolist()
-    
+
         # Check if any of the predicted values match the true indices
-        pred_indices = val_pred[i]
+        pred_indices = pred[i]
         if any(pred in true_indices for pred in pred_indices):
             hits += 1
 
@@ -328,7 +338,8 @@ for epoch in range(1, args.epochs + 1):
     train_loss = train()
     if epoch % args.eval_epochs_interval == 0:
         val_pred = test(loader_dict["val"], desc="Val")
-        val_metrics[tune_metric] = calculate_hit_rate_on_sparse_target(val_pred, dst_nodes_dict['val'])
+        val_metrics[tune_metric] = calculate_hit_rate_on_sparse_target(
+            val_pred, dst_nodes_dict['val'])
         print(f"Epoch: {epoch:02d}, Train loss: {train_loss}, "
               f"Val metrics: {val_metrics}")
 
@@ -339,7 +350,8 @@ for epoch in range(1, args.epochs + 1):
 assert state_dict is not None
 model.load_state_dict(state_dict)
 val_pred = test(loader_dict["val"], desc="Best val")
-val_metrics = calculate_hit_rate_on_sparse_target(val_pred, dst_nodes_dict['val'])
+val_metrics = calculate_hit_rate_on_sparse_target(val_pred,
+                                                  dst_nodes_dict['val'])
 print(f"Best val metrics: {val_metrics}")
 
 with open(osp.join(path, 'tst_int'), 'rb') as fs:
