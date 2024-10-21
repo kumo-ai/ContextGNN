@@ -363,8 +363,8 @@ val_metrics = calculate_hit_rate_on_sparse_target(val_pred,
 print(f"Best val metrics: {val_metrics}")
 
 with open(osp.join(path, 'tst_int'), 'rb') as fs:
-    mat = pickle.load(fs)
+    target_list = pickle.load(fs)
 
 test_pred = test(loader_dict["test"], desc="Test")
-test_metrics = calculate_hit_rate(test_pred, mat)
+test_metrics = calculate_hit_rate(test_pred, target_list)
 print(f"Best test metrics: {test_metrics}")
