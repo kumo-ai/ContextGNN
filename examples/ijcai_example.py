@@ -334,7 +334,7 @@ def test(loader: NeighborLoader, desc: str) -> np.ndarray:
 
         _, pred_mini = torch.topk(scores, k=args.eval_k, dim=1)
         pred_list.append(pred_mini)
-    pred = torch.cat(pred_list, dim=0).cpu().numpy()
+    pred = torch.cat(pred_list, dim=0)
     return pred
 
 
