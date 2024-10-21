@@ -41,7 +41,7 @@ parser.add_argument("--num_neighbors", type=int, default=128)
 parser.add_argument("--temporal_strategy", type=str, default="last")
 parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
 parser.add_argument("--num_workers", type=int, default=0)
-parser.add_argument("--eval_k", type=int, default=10)
+parser.add_argument("--eval_k", type=int, default=1)
 parser.add_argument("--seed", type=int, default=42)
 args = parser.parse_args()
 
@@ -103,7 +103,7 @@ def calculate_hit_rate_on_sparse_target(pred: torch.Tensor,
         row_end = crow_indices[i + 1].item()
         dst_indices = col_indices[row_start:row_end]
         bool_indices = values[row_start:row_end]
-        true_indices = dst_indices[bool_indices].tolist()
+        true_indices = dst_indices[bool_indices]
 
         # Check if any of the predicted values match the true indices
         pred_indices = pred[i]
@@ -347,7 +347,7 @@ for epoch in range(1, args.epochs + 1):
     if epoch % args.eval_epochs_interval == 0:
         val_pred = test(loader_dict["val"], desc="Val")
         val_metrics[tune_metric] = calculate_hit_rate_on_sparse_target(
-            val_pred, dst_nodes_dict['val'])
+            val_pred, dst_nodes_dict['val'].to(device))
         print(f"Epoch: {epoch:02d}, Train loss: {train_loss}, "
               f"Val metrics: {val_metrics}")
 
@@ -359,7 +359,7 @@ assert state_dict is not None
 model.load_state_dict(state_dict)
 val_pred = test(loader_dict["val"], desc="Best val")
 val_metrics = calculate_hit_rate_on_sparse_target(val_pred,
-                                                  dst_nodes_dict['val'])
+                                                  dst_nodes_dict['val'].to(device))
 print(f"Best val metrics: {val_metrics}")
 
 with open(osp.join(path, 'tst_int'), 'rb') as fs:
