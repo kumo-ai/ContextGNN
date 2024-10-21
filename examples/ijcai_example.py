@@ -93,6 +93,7 @@ def calculate_hit_rate_on_sparse_target(pred: torch.Tensor,
     crow_indices = target.crow_indices()
     col_indices = target.col_indices()
     values = target.values()
+    assert values is not None
     # Iterate through each row and check if predictions match ground truth
     hits = 0
     num_rows = val_pred.shape[0]
@@ -164,6 +165,8 @@ for i in range(len(behs)):
                 torch.tensor(coo_mat.row, dtype=torch.long))
     create_edge(data, behavior, beh_idx, dst_entity_table,
                 torch.tensor(coo_mat.col, dtype=torch.long))
+
+assert dst_nodes is not None
 
 num_neighbors = [
     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
@@ -312,7 +315,7 @@ def train() -> float:
 
 
 @torch.no_grad()
-def test(loader: NeighborLoader, desc: str) -> np.ndarray:
+def test(loader: NeighborLoader, desc: str) -> torch.Tensor:
     model.eval()
 
     pred_list: List[Tensor] = []
@@ -358,8 +361,8 @@ for epoch in range(1, args.epochs + 1):
 assert state_dict is not None
 model.load_state_dict(state_dict)
 val_pred = test(loader_dict["val"], desc="Best val")
-val_metrics = calculate_hit_rate_on_sparse_target(val_pred,
-                                                  dst_nodes_dict['val'].to(device))
+val_metrics = calculate_hit_rate_on_sparse_target(
+    val_pred, dst_nodes_dict['val'].to(device))
 print(f"Best val metrics: {val_metrics}")
 
 with open(osp.join(path, 'tst_int'), 'rb') as fs:
