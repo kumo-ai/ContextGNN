@@ -19,6 +19,7 @@ from torch_geometric.loader import NeighborLoader
 from torch_geometric.seed import seed_everything
 from torch_geometric.utils import sort_edge_index
 from torch_geometric.utils.cross_entropy import sparse_cross_entropy
+from torch_geometric.utils.map import map_index
 from tqdm import tqdm
 
 from contextgnn.nn.models import IDGNN, ContextGNN, ShallowRHSGNN
@@ -40,10 +41,10 @@ parser.add_argument("--aggr", type=str, default="sum")
 parser.add_argument("--num_layers", type=int, default=2)
 parser.add_argument("--num_neighbors", type=int, default=128)
 parser.add_argument("--temporal_strategy", type=str, default="last")
-parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
+parser.add_argument("--max_steps_per_epoch", type=int, default=2)
 parser.add_argument("--num_workers", type=int, default=0)
 parser.add_argument("--eval_k", type=int, default=10)
-parser.add_argument("--gamma_rate", type=int, default=0.95) 
+parser.add_argument("--gamma_rate", type=int, default=0.95)
 parser.add_argument("--seed", type=int, default=42)
 args = parser.parse_args()
 
@@ -62,8 +63,10 @@ dst_entity_table = 'item'
 data = HeteroData()
 
 
-def calculate_hit_rate(pred: torch.Tensor, target: List[Optional[int]], num_candidates=None):
-    r"""Calculates hit rate when pred is a tensor and target is a list
+def calculate_hit_rate(pred: torch.Tensor, target: List[Optional[int]],
+                       num_candidates=None):
+    r"""Calculates hit rate when pred is a tensor and target is a list.
+
     Args:
         pred (torch.Tensor): Prediction tensor of size (num_entity,
             num_target_predicitons_per_entity).
@@ -100,7 +103,7 @@ def calculate_hit_rate_on_sparse_target(pred: torch.Tensor,
     assert values is not None
     # Iterate through each row and check if predictions match ground truth
     hits = 0
-    num_rows = val_pred.shape[0]
+    num_rows = pred.shape[0]
 
     for i in range(num_rows):
         # Get the ground truth indices for this row
@@ -266,6 +269,7 @@ else:
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 lr_scheduler = ExponentialLR(optimizer, gamma=args.gamma_rate)
 
+
 def train() -> float:
     model.train()
 
@@ -300,9 +304,8 @@ def train() -> float:
             sampled_dst = torch.unique(dst_index)
             logits = model(batch, src_entity_table, dst_entity_table)
             logits = logits[:, sampled_dst]
-            edge_label_index = torch.stack([src_batch, dst_index], dim=0)
-            import pdb
-            pdb.set_trace()
+            idx, _ = map_index(dst_index, sampled_dst, inclusive=True)
+            edge_label_index = torch.stack([src_batch, idx], dim=0)
             loss = sparse_cross_entropy(logits, edge_label_index)
             numel = len(batch[dst_entity_table].batch)
         loss.backward()
@@ -327,7 +330,7 @@ def train() -> float:
 
 
 @torch.no_grad()
-def test(loader: NeighborLoader, desc: str, target = None) -> np.ndarray:
+def test(loader: NeighborLoader, desc: str, target=None) -> np.ndarray:
     model.eval()
 
     pred_list: List[Tensor] = []
@@ -347,24 +350,43 @@ def test(loader: NeighborLoader, desc: str, target = None) -> np.ndarray:
         else:
             raise ValueError(f"Unsupported model type: {args.model}.")
 
+        # The neg set should be chosen from all sampled items.
+        all_sampled_rhs = batch['item'].n_id.unique()
+        num_sampled_rhs = len(all_sampled_rhs)
+
         if target is not None:
             # randomly select num_item indices
             batch_user = scores.shape[0]
-            num_item = scores.shape[1]
-            trnLabel[batch_user]
-            import pdb
+            trnLabel[batch['user'].n_id]
             # full set is the sampled rhs set
-            # you pick 99 items from the sampled rhs set. 
-            pdb.set_trace()
-            random_items = torch.randint(0, num_item, (batch_user, 100)).to(scores.device)  # Shape: (batch_user, 100)
+            # you pick 99 items from the sampled rhs set.
+
+            # you pick 99 items from the set where the user has never purchased
+
+            all_sampled_rhs = batch['item'].n_id.unique()
+            random_items = torch.randint(
+                0, num_sampled_rhs, (batch_user, 100)).to(
+                    scores.device)  # Shape: (batch_user, 100)
             for i in range(batch_size):
                 user_idx = batch[src_entity_table].n_id[i]
+                neg_item_per_user = np.reshape(
+                    np.argwhere(trnLabel[user_idx].toarray().reshape(-1) == 0),
+                    [-1])
+                neg_item_per_user_sampled = np.intersect1d(
+                    all_sampled_rhs, neg_item_per_user)
+                random_items[i, :] = torch.tensor(
+                    np.random.choice(neg_item_per_user_sampled, size=100,
+                                     replace=False),
+                    dtype=torch.long).to(random_items.device)
+
+                # include the target item if it is there
                 target_item = target[user_idx]
                 if target_item is not None:
                     random_items[i, 0] = target_item
-            
             selected_scores = torch.gather(scores, 1, random_items)
-            _, top_k_indices = torch.topk(selected_scores, args.eval_k, dim=1)  # Shape: (num_user, args.eval_k)
+            _, top_k_indices = torch.topk(
+                selected_scores, args.eval_k,
+                dim=1)  # Shape: (num_user, args.eval_k)
 
             pred_mini = random_items[top_k_indices.tolist()]
         else:
@@ -384,6 +406,7 @@ with open(osp.join(path, 'tst_int'), 'rb') as fs:
 
 for epoch in range(1, args.epochs + 1):
     train_loss = train()
+    print(f"Epoch: {epoch:02d}, Train loss: {train_loss}")
     test_pred = test(loader_dict["test"], desc="Test", target=target_list)
     test_metrics = calculate_hit_rate(test_pred, target_list)
     print(f"Best test metrics: {test_metrics}")
