@@ -357,7 +357,6 @@ def test(loader: NeighborLoader, desc: str, target=None) -> np.ndarray:
         if target is not None:
             # randomly select num_item indices
             batch_user = scores.shape[0]
-            trnLabel[batch['user'].n_id]
             # full set is the sampled rhs set
             # you pick 99 items from the sampled rhs set.
 
@@ -368,12 +367,12 @@ def test(loader: NeighborLoader, desc: str, target=None) -> np.ndarray:
                 0, num_sampled_rhs, (batch_user, 100)).to(
                     scores.device)  # Shape: (batch_user, 100)
             for i in range(batch_size):
-                user_idx = batch[src_entity_table].n_id[i]
+                user_idx = batch[src_entity_table].n_id[i].cpu()
                 neg_item_per_user = np.reshape(
                     np.argwhere(trnLabel[user_idx].toarray().reshape(-1) == 0),
                     [-1])
                 neg_item_per_user_sampled = np.intersect1d(
-                    all_sampled_rhs, neg_item_per_user)
+                    all_sampled_rhs.cpu(), neg_item_per_user)
                 random_items[i, :] = torch.tensor(
                     np.random.choice(neg_item_per_user_sampled, size=100,
                                      replace=False),
