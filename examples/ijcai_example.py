@@ -388,16 +388,6 @@ def test(loader: NeighborLoader, desc: str, target=None) -> np.ndarray:
                 user_idx = batch[src_entity_table].n_id[i]
                 pos_item_per_user = trnLabel[user_idx].coalesce().indices(
                 ).reshape(-1)
-                #neg_item_per_user = np.reshape(
-                #    np.argwhere(trnLabel[user_idx].toarray().reshape(-1) == 0),
-                #    [-1])
-
-                #neg_item_per_user_sampled = np.intersect1d(
-                #    all_sampled_rhs.cpu(), neg_item_per_user)
-                #sampled_rhs = torch.tensor(
-                #    np.random.choice(all_sampled_rhs, size=200,
-                #                     replace=False),
-                #    dtype=torch.long).to(random_items.device)
 
                 indices = torch.randint(0, all_sampled_rhs.size(0), (1000, ))
                 sampled_items = all_sampled_rhs[indices]
