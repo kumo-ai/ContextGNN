@@ -39,8 +39,13 @@ parser.add_argument(
     choices=["contextgnn", "idgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--lr", type=float, default=0.001)
-parser.add_argument("--epochs", type=int, default=100)
+parser.add_argument("--epochs", type=int, default=10)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
+parser.add_argument("--num_trials", type=int, default=2,
+                    help="Number of Optuna-based hyper-parameter tuning.")
+parser.add_argument(
+    "--num_repeats", type=int, default=2,
+    help="Number of repeated training and eval on the best config.")
 parser.add_argument("--batch_size", type=int, default=512)
 parser.add_argument("--channels", type=int, default=128)
 parser.add_argument("--aggr", type=str, default="sum")
@@ -411,6 +416,7 @@ def train_and_eval_with_cfg(
 ) -> float:
     if args.model in ["contextgnn", "shallowrhsgnn"]:
         model_cfg["num_nodes"] = num_dst_nodes
+        model_cfg["dst_entity_table"] = dst_entity_table
     elif args.model == "idgnn":
         model_cfg["out_channels"] = 1
     encoder_model_kwargs = {
@@ -437,7 +443,7 @@ def train_and_eval_with_cfg(
     best_test_metric = 0.0
 
     for epoch in range(1, args.epochs + 1):
-        train_sparse_tensor = SparseTensor(dst_nodes_dict["train"][1],
+        train_sparse_tensor = SparseTensor(dst_nodes_dict["train"],
                                            device=device)
         try:
             train_loss = train(model, optimizer, loader_dict["train"],
@@ -456,6 +462,7 @@ def train_and_eval_with_cfg(
             # Check if we should early stop
             test_pred = test(model, loader_dict["test"], "test", "test")
             test_metric = calculate_hit_rate(test_pred, target_list)
+            print(f"Test metric: {test_metric:.4f}")
             if test_metric > best_test_metric:
                 best_test_metric = test_metric
             if test_metric < best_test_metric - TEST_LOSS_DELTA:
