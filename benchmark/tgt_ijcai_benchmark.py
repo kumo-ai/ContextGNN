@@ -230,10 +230,10 @@ if args.model == "idgnn":
     model_cls = IDGNN
 elif args.model in ["contextgnn", "shallowrhsgnn"]:
     model_search_space = {
-        "encoder_channels": [32, 64, 128, 256, 512],
+        "encoder_channels": [32, 64, 128, 256],
         "encoder_layers": [2, 4, 8],
-        "channels": [32, 64, 128, 256, 512],
-        "embedding_dim": [32, 64, 128, 256, 512],
+        "channels": [32, 64, 128, 256],
+        "embedding_dim": [32, 64, 128, 256],
         "norm": ["layer_norm", "batch_norm"],
         "rhs_emb_mode": [
             RHSEmbeddingMode.FUSION, RHSEmbeddingMode.FEATURE,
@@ -241,7 +241,7 @@ elif args.model in ["contextgnn", "shallowrhsgnn"]:
         ]
     }
     train_search_space = {
-        "batch_size": [256, 512, 1024],
+        "batch_size": [128, 256, 512],
         "base_lr": [0.001, 0.01],
         "gamma_rate": [0.8, 1.],
     }
@@ -542,10 +542,8 @@ def main_gnn() -> None:
     # Save results
     if args.result_path != "":
         os.makedirs(args.result_path, exist_ok=True)
-        torch.save(
-            result_dict,
-            osp.join(args.result_path,
-                     f"{args.dataset}_{args.task}_{args.model}"))
+        torch.save(result_dict,
+                   osp.join(args.result_path, f"ijcai_{args.model}"))
 
 
 if __name__ == "__main__":
