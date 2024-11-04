@@ -41,7 +41,7 @@ parser.add_argument(
 parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--epochs", type=int, default=15)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
-parser.add_argument("--num_trials", type=int, default=2,
+parser.add_argument("--num_trials", type=int, default=10,
                     help="Number of Optuna-based hyper-parameter tuning.")
 parser.add_argument(
     "--num_repeats", type=int, default=2,
@@ -241,7 +241,7 @@ elif args.model in ["contextgnn", "shallowrhsgnn"]:
         ]
     }
     train_search_space = {
-        "batch_size": [128, 256, 512],
+        "batch_size": [128, 256],
         "base_lr": [0.001, 0.01],
         "gamma_rate": [0.8, 1.],
     }
