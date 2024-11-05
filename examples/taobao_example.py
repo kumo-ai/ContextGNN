@@ -1,13 +1,10 @@
 import argparse
-import os
 import os.path as osp
 import pickle
-import time
 import warnings
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Dict, List, Optional, Union
 
 import numpy as np
-import optuna
 import pandas as pd
 import scipy.sparse as sp
 import torch
@@ -28,28 +25,20 @@ from tqdm import tqdm
 from contextgnn.nn.models import IDGNN, ContextGNN, ShallowRHSGNN
 from contextgnn.utils import RHSEmbeddingMode
 
-TRAIN_CONFIG_KEYS = ["batch_size", "gamma_rate", "base_lr"]
-TEST_LOSS_DELTA = 0.05
-
 parser = argparse.ArgumentParser()
 parser.add_argument(
     "--model",
     type=str,
     default="contextgnn",
-    choices=["contextgnn", "idgnn", "shallowrhsgnn"],
+    choices=["contextgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--lr", type=float, default=0.001)
-parser.add_argument("--epochs", type=int, default=15)
+parser.add_argument("--epochs", type=int, default=100)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
-parser.add_argument("--num_trials", type=int, default=10,
-                    help="Number of Optuna-based hyper-parameter tuning.")
-parser.add_argument(
-    "--num_repeats", type=int, default=2,
-    help="Number of repeated training and eval on the best config.")
-parser.add_argument("--batch_size", type=int, default=128)
+parser.add_argument("--batch_size", type=int, default=512)
 parser.add_argument("--channels", type=int, default=128)
 parser.add_argument("--aggr", type=str, default="sum")
-parser.add_argument("--num_layers", type=int, default=6)
+parser.add_argument("--num_layers", type=int, default=2)
 parser.add_argument("--num_neighbors", type=int, default=128)
 parser.add_argument("--temporal_strategy", type=str, default="last")
 parser.add_argument("--max_steps_per_epoch", type=int, default=2)
@@ -65,7 +54,6 @@ if torch.cuda.is_available():
     torch.cuda.empty_cache()
 seed_everything(args.seed)
 
-# Constructing data
 path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data',
                 'ijcai-contest')
 behs = ['click', 'fav', 'cart', 'buy']
@@ -73,9 +61,6 @@ src_entity_table = 'user'
 dst_entity_table = 'item'
 
 data = HeteroData()
-
-with open(osp.join(path, 'tst_int'), 'rb') as fs:
-    target_list = pickle.load(fs)
 
 
 def sparse_matrix_to_sparse_coo(sci_sparse_matrix):
@@ -96,7 +81,6 @@ def sparse_matrix_to_sparse_coo(sci_sparse_matrix):
 def calculate_hit_rate(pred: torch.Tensor, target: List[Optional[int]],
                        num_candidates=None):
     r"""Calculates hit rate when pred is a tensor and target is a list.
-
     Args:
         pred (torch.Tensor): Prediction tensor of size (num_entity,
             num_target_predicitons_per_entity).
@@ -213,59 +197,110 @@ num_neighbors = [
     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
 ]
 
-model_cls: Type[Union[IDGNN, ContextGNN, ShallowRHSGNN]]
+loader_dict: Dict[str, NeighborLoader] = {}
+dst_nodes_dict = {}
+split_date: Dict[str, int] = {}
+split_date['train'] = 1110
+split_date['test'] = 1111
+
+num_src_nodes = data[src_entity_table].num_nodes
+num_dst_nodes = data[dst_entity_table].num_nodes
+
+for split in ["train", "test"]:
+    dst_nodes_data = dst_nodes.data < split_date[split]
+    dst_nodes_dict[split] = torch.sparse_coo_tensor(
+        torch.stack([torch.tensor(dst_nodes.row),
+                     torch.tensor(dst_nodes.col)]), dst_nodes_data,
+        size=dst_nodes.shape).to_sparse_csr()
+    loader_dict[split] = NeighborLoader(
+        data,
+        num_neighbors=num_neighbors,
+        time_attr="time",
+        input_nodes=(src_entity_table,
+                     torch.arange(num_src_nodes, dtype=torch.long)),
+        input_time=torch.full((num_src_nodes, ), split_date[split],
+                              dtype=torch.long),
+        subgraph_type="bidirectional",
+        batch_size=args.batch_size,
+        temporal_strategy=args.temporal_strategy,
+        shuffle=split == "train",
+        num_workers=args.num_workers,
+        persistent_workers=args.num_workers > 0,
+    )
+model: Union[IDGNN, ContextGNN, ShallowRHSGNN]
 
 if args.model == "idgnn":
-    model_search_space = {
-        "encoder_channels": [64, 128, 256],
-        "encoder_layers": [2, 4, 8],
-        "channels": [64, 128, 256],
-        "norm": ["layer_norm", "batch_norm"]
-    }
-    train_search_space = {
-        "batch_size": [256, 512],
-        "base_lr": [0.0001, 0.01],
-        "gamma_rate": [0.9, 0.95, 1.],
-    }
-    model_cls = IDGNN
-elif args.model in ["contextgnn", "shallowrhsgnn"]:
-    model_search_space = {
-        "encoder_channels": [32, 64, 128, 256],
-        "encoder_layers": [2, 4, 8],
-        "channels": [32, 64, 128, 256],
-        "embedding_dim": [32, 64, 128, 256],
-        "norm": ["layer_norm", "batch_norm"],
-        "rhs_emb_mode": [
-            RHSEmbeddingMode.FUSION, RHSEmbeddingMode.FEATURE,
-            RHSEmbeddingMode.LOOKUP
-        ]
-    }
-    train_search_space = {
-        "batch_size": [128, 256],
-        "base_lr": [0.001, 0.01],
-        "gamma_rate": [0.8, 1.],
-    }
-    model_cls = (ContextGNN if args.model == "contextgnn" else ShallowRHSGNN)
+    model = IDGNN(
+        data=data,
+        col_stats_dict=col_stats_dict,
+        num_layers=args.num_layers,
+        channels=args.channels,
+        out_channels=1,
+        aggr=args.aggr,
+        norm="layer_norm",
+        torch_frame_model_kwargs={
+            "channels": 128,
+            "num_layers": 4,
+        },
+    ).to(device)
+elif args.model == "contextgnn":
+    model = ContextGNN(
+        data=data,
+        col_stats_dict=col_stats_dict,
+        rhs_emb_mode=RHSEmbeddingMode.FUSION,
+        dst_entity_table=dst_entity_table,
+        num_nodes=num_dst_nodes,
+        num_layers=args.num_layers,
+        channels=args.channels,
+        aggr="sum",
+        norm="layer_norm",
+        embedding_dim=64,
+        torch_frame_model_kwargs={
+            "channels": 128,
+            "num_layers": 4,
+        },
+    ).to(device)
+elif args.model == 'shallowrhsgnn':
+    model = ShallowRHSGNN(
+        data=data,
+        col_stats_dict=col_stats_dict,
+        rhs_emb_mode=RHSEmbeddingMode.FUSION,
+        dst_entity_table='item',
+        num_nodes=num_dst_nodes,
+        num_layers=args.num_layers,
+        channels=args.channels,
+        aggr="sum",
+        norm="layer_norm",
+        embedding_dim=64,
+        torch_frame_model_kwargs={
+            "channels": 128,
+            "num_layers": 4,
+        },
+    ).to(device)
+else:
+    raise ValueError(f"Unsupported model type {args.model}.")
+
+optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+lr_scheduler = ExponentialLR(optimizer, gamma=args.gamma_rate)
 
 
-def train(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
-          loader: NeighborLoader, train_sparse_tensor: SparseTensor) -> float:
+def train() -> float:
     model.train()
 
     loss_accum = count_accum = 0
     steps = 0
-    total_steps = min(len(loader), args.max_steps_per_epoch)
-    for batch in tqdm(loader, total=total_steps, desc="Train"):
+    total_steps = min(len(loader_dict["train"]), args.max_steps_per_epoch)
+    sparse_tensor = SparseTensor(dst_nodes_dict["train"], device=device)
+    for batch in tqdm(loader_dict["train"], total=total_steps, desc="Train"):
         batch = batch.to(device)
 
         # Get ground-truth
         input_id = batch['user'].input_id
-        src_batch, dst_index = train_sparse_tensor[input_id]
+        src_batch, dst_index = sparse_tensor[input_id]
 
         # Optimization
         optimizer.zero_grad()
 
-        # TODO: Fix idgnn part
         if args.model == 'idgnn':
             out = model(batch, src_entity_table, dst_entity_table).flatten()
             batch_size = batch[src_entity_table].batch_size
@@ -290,6 +325,7 @@ def train(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
         loss.backward()
 
         optimizer.step()
+        lr_scheduler.step()
 
         loss_accum += float(loss) * numel
         count_accum += numel
@@ -311,8 +347,7 @@ trnLabel = sparse_matrix_to_sparse_coo(trnLabel)
 
 
 @torch.no_grad()
-def test(model: torch.nn.Module, loader: NeighborLoader, desc: str, stage: str,
-         target=None) -> np.ndarray:
+def test(loader: NeighborLoader, desc: str, target=None) -> np.ndarray:
     model.eval()
 
     pred_list: List[Tensor] = []
@@ -350,7 +385,6 @@ def test(model: torch.nn.Module, loader: NeighborLoader, desc: str, stage: str,
                     scores.device)  # Shape: (batch_user, 100)
             for i in range(batch_size):
                 user_idx = batch[src_entity_table].n_id[i]
-                assert trnLabel is not None
                 pos_item_per_user = trnLabel[user_idx].coalesce().indices(
                 ).reshape(-1)
 
@@ -377,175 +411,21 @@ def test(model: torch.nn.Module, loader: NeighborLoader, desc: str, stage: str,
     return pred
 
 
-loader_dict: Dict[str, NeighborLoader] = {}
-dst_nodes_dict = {}
-split_date: Dict[str, int] = {}
-split_date['train'] = 1110
-split_date['test'] = 1111
+state_dict = None
+best_val_metric = 0
+tune_metric = 'hr'
+val_metrics = dict()
 
-num_src_nodes = data[src_entity_table].num_nodes
-num_dst_nodes = data[dst_entity_table].num_nodes
+with open(osp.join(path, 'tst_int'), 'rb') as fs:
+    target_list = pickle.load(fs)
 
-for split in ["train", "test"]:
-    dst_nodes_data = dst_nodes.data < split_date[split]
-    dst_nodes_dict[split] = torch.sparse_coo_tensor(
-        torch.stack([torch.tensor(dst_nodes.row),
-                     torch.tensor(dst_nodes.col)]), dst_nodes_data,
-        size=dst_nodes.shape).to_sparse_csr()
-    loader_dict[split] = NeighborLoader(
-        data,
-        num_neighbors=num_neighbors,
-        time_attr="time",
-        input_nodes=(src_entity_table,
-                     torch.arange(num_src_nodes, dtype=torch.long)),
-        input_time=torch.full((num_src_nodes, ), split_date[split],
-                              dtype=torch.long),
-        subgraph_type="bidirectional",
-        batch_size=args.batch_size,
-        temporal_strategy=args.temporal_strategy,
-        shuffle=split == "train",
-        num_workers=args.num_workers,
-        persistent_workers=args.num_workers > 0,
-    )
+for epoch in range(1, args.epochs + 1):
+    train_loss = train()
+    print(f"Epoch: {epoch:02d}, Train loss: {train_loss}")
+    test_pred = test(loader_dict["test"], desc="Test", target=target_list)
+    test_metrics = calculate_hit_rate(test_pred, target_list)
+    print(f"Best test metrics: {test_metrics}")
 
-
-def train_and_eval_with_cfg(
-    model_cfg: Dict[str, Any],
-    train_cfg: Dict[str, Any],
-    trial: Optional[optuna.trial.Trial] = None,
-) -> float:
-    if args.model in ["contextgnn", "shallowrhsgnn"]:
-        model_cfg["num_nodes"] = num_dst_nodes
-        model_cfg["dst_entity_table"] = dst_entity_table
-    elif args.model == "idgnn":
-        model_cfg["out_channels"] = 1
-    encoder_model_kwargs = {
-        "channels": model_cfg["encoder_channels"],
-        "num_layers": model_cfg["encoder_layers"],
-    }
-    model_kwargs = {
-        k: v
-        for k, v in model_cfg.items()
-        if k not in ["encoder_channels", "encoder_layers"]
-    }
-    # Use model_cfg to set up training procedure
-    model = model_cls(
-        **model_kwargs,
-        data=data,
-        col_stats_dict=col_stats_dict,
-        num_layers=args.num_layers,
-        torch_frame_model_kwargs=encoder_model_kwargs,
-    ).to(device)
-    model.reset_parameters()
-    # Use train_cfg to set up training procedure
-    optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg["base_lr"])
-    lr_scheduler = ExponentialLR(optimizer, gamma=train_cfg["gamma_rate"])
-    best_test_metric = 0.0
-
-    for epoch in range(1, args.epochs + 1):
-        train_sparse_tensor = SparseTensor(dst_nodes_dict["train"],
-                                           device=device)
-        try:
-            train_loss = train(model, optimizer, loader_dict["train"],
-                               train_sparse_tensor)
-        except RuntimeError as e:
-            if 'out of memory' in str(e):
-                print("CUDA out of memory error. Clearing cache...")
-                torch.cuda.empty_cache()  # Clear the cache to free up memory
-                return 0.0
-            else:
-                raise e
-        optimizer.zero_grad()
-        lr_scheduler.step()
-        print(f"Train Loss: {train_loss:.4f}")
-        if epoch % 5 == 0:
-            # Check if we should early stop
-            test_pred = test(model, loader_dict["test"], "test", "test")
-            test_metric = calculate_hit_rate(test_pred, target_list)
-            print(f"Test metric: {test_metric:.4f}")
-            if test_metric > best_test_metric:
-                best_test_metric = test_metric
-            if test_metric < best_test_metric - TEST_LOSS_DELTA:
-                print(f"Best test: {best_test_metric:.4f}")
-                return best_test_metric
-
-            # Check if we should prune the trials
-            if trial is not None:
-                trial.report(test_metric, epoch)
-                if trial.should_prune():
-                    raise optuna.TrialPruned()
-    print(f"Test metric: {best_test_metric:.4f}")
-    return test_metric
-
-
-def objective(trial: optuna.trial.Trial) -> float:
-    model_cfg: Dict[str, Any] = {}
-    for name, search_list in model_search_space.items():
-        assert isinstance(search_list, list)
-        model_cfg[name] = trial.suggest_categorical(name, search_list)
-    train_cfg: Dict[str, Any] = {}
-    for name, search_list in train_search_space.items():
-        assert isinstance(search_list, list)
-        if name == "batch_size":
-            train_cfg[name] = trial.suggest_categorical(name, search_list)
-        else:
-            train_cfg[name] = trial.suggest_loguniform(name, search_list[0],
-                                                       search_list[1])
-
-    best_test_metric = train_and_eval_with_cfg(model_cfg=model_cfg,
-                                               train_cfg=train_cfg,
-                                               trial=trial)
-    return best_test_metric
-
-
-def main_gnn() -> None:
-    # Hyper-parameter optimization with Optuna
-    print("Hyper-parameter search via Optuna")
-    start_time = time.time()
-    study = optuna.create_study(
-        pruner=optuna.pruners.MedianPruner(),
-        direction="maximize",
-    )
-    study.optimize(objective, n_trials=args.num_trials)
-    end_time = time.time()
-    search_time = end_time - start_time
-    print("Hyper-parameter search done. Found the best config.")
-    params = study.best_params
-    best_train_cfg = {}
-    for train_cfg_key in TRAIN_CONFIG_KEYS:
-        best_train_cfg[train_cfg_key] = params.pop(train_cfg_key)
-    best_model_cfg = params
-
-    print(f"Repeat experiments {args.num_repeats} times with the best train "
-          f"config {best_train_cfg} and model config {best_model_cfg}.")
-    start_time = time.time()
-    best_test_metrics = []
-    for _ in range(args.num_repeats):
-        best_test_metric = train_and_eval_with_cfg(best_model_cfg,
-                                                   best_train_cfg)
-        best_test_metrics.append(best_test_metric)
-    end_time = time.time()
-    final_model_time = (end_time - start_time) / args.num_repeats
-    best_test_metrics_array = np.array(best_test_metrics)
-
-    result_dict = {
-        "args": args.__dict__,
-        "best_test_metrics": best_test_metrics_array,
-        "best_test_metric": best_test_metrics_array.mean(),
-        "best_train_cfg": best_train_cfg,
-        "best_model_cfg": best_model_cfg,
-        "search_time": search_time,
-        "final_model_time": final_model_time,
-        "total_time": search_time + final_model_time,
-    }
-    print(result_dict)
-    # Save results
-    if args.result_path != "":
-        os.makedirs(args.result_path, exist_ok=True)
-        torch.save(result_dict,
-                   osp.join(args.result_path, f"ijcai_{args.model}"))
-
-
-if __name__ == "__main__":
-    print(args)
-    main_gnn()
+test_pred = test(loader_dict["test"], desc="Test", target=target_list)
+test_metrics = calculate_hit_rate(test_pred, target_list)
+print(f"Best test metrics: {test_metrics}")
