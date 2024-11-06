@@ -81,6 +81,7 @@ def sparse_matrix_to_sparse_coo(sci_sparse_matrix):
 def calculate_hit_rate(pred: torch.Tensor, target: List[Optional[int]],
                        num_candidates=None):
     r"""Calculates hit rate when pred is a tensor and target is a list.
+
     Args:
         pred (torch.Tensor): Prediction tensor of size (num_entity,
             num_target_predicitons_per_entity).
