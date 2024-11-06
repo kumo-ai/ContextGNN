@@ -57,6 +57,7 @@ parser.add_argument("--num_workers", type=int, default=0)
 parser.add_argument("--eval_k", type=int, default=10)
 parser.add_argument("--gamma_rate", type=int, default=0.95)
 parser.add_argument("--seed", type=int, default=42)
+parser.add_argument("--result_path", default="results")
 args = parser.parse_args()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
