@@ -231,7 +231,7 @@ if args.model == "idgnn":
 elif args.model in ["contextgnn", "shallowrhsgnn"]:
     model_search_space = {
         "encoder_channels": [32, 64, 128, 256],
-        "encoder_layers": [2, 4, 8],
+        "encoder_layers": [2, 4],
         "channels": [32, 64, 128, 256],
         "embedding_dim": [32, 64, 128, 256],
         "norm": ["layer_norm", "batch_norm"],
