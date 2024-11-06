@@ -46,11 +46,11 @@ parser.add_argument("--num_trials", type=int, default=10,
 parser.add_argument(
     "--num_repeats", type=int, default=2,
     help="Number of repeated training and eval on the best config.")
-parser.add_argument("--batch_size", type=int, default=128)
+parser.add_argument("--batch_size", type=int, default=64)
 parser.add_argument("--channels", type=int, default=128)
 parser.add_argument("--aggr", type=str, default="sum")
 parser.add_argument("--num_layers", type=int, default=6)
-parser.add_argument("--num_neighbors", type=int, default=128)
+parser.add_argument("--num_neighbors", type=int, default=64)
 parser.add_argument("--temporal_strategy", type=str, default="last")
 parser.add_argument("--max_steps_per_epoch", type=int, default=100)
 parser.add_argument("--num_workers", type=int, default=0)
@@ -354,6 +354,7 @@ def test(model: torch.nn.Module, loader: NeighborLoader, desc: str, stage: str,
                 assert trnLabel is not None
                 pos_item_per_user = trnLabel[user_idx].coalesce().indices(
                 ).reshape(-1)
+                pos_item_per_user = pos_item_per_user.to(device)
 
                 indices = torch.randint(0, all_sampled_rhs.size(0), (1000, ))
                 sampled_items = all_sampled_rhs[indices]
