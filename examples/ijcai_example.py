@@ -35,13 +35,13 @@ parser.add_argument(
 parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--epochs", type=int, default=100)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
-parser.add_argument("--batch_size", type=int, default=512)
-parser.add_argument("--channels", type=int, default=128)
+parser.add_argument("--batch_size", type=int, default=64)
+parser.add_argument("--channels", type=int, default=32)
 parser.add_argument("--aggr", type=str, default="sum")
-parser.add_argument("--num_layers", type=int, default=2)
-parser.add_argument("--num_neighbors", type=int, default=128)
+parser.add_argument("--num_layers", type=int, default=6)
+parser.add_argument("--num_neighbors", type=int, default=32)
 parser.add_argument("--temporal_strategy", type=str, default="last")
-parser.add_argument("--max_steps_per_epoch", type=int, default=2)
+parser.add_argument("--max_steps_per_epoch", type=int, default=100)
 parser.add_argument("--num_workers", type=int, default=0)
 parser.add_argument("--eval_k", type=int, default=10)
 parser.add_argument("--gamma_rate", type=int, default=0.95)
@@ -112,8 +112,8 @@ def calculate_hit_rate_on_sparse_target(pred: torch.Tensor,
             num_target_predicitons_per_entity).
         target (torch.sparse.Tensor): Target sparse tensor.
     """
-    crow_indices = target.crow_indices()
-    col_indices = target.col_indices()
+    crow_indices = target.crow_indices().to(pred.device)
+    col_indices = target.col_indices().to(pred.device)
     values = target.values()
     assert values is not None
     # Iterate through each row and check if predictions match ground truth
@@ -201,8 +201,8 @@ num_neighbors = [
 loader_dict: Dict[str, NeighborLoader] = {}
 dst_nodes_dict = {}
 split_date: Dict[str, int] = {}
-split_date['train'] = 1110
-split_date['test'] = 1111
+split_date['train'] = 1112
+split_date['test'] = 1112
 
 num_src_nodes = data[src_entity_table].num_nodes
 num_dst_nodes = data[dst_entity_table].num_nodes
@@ -344,7 +344,7 @@ def train() -> float:
     return loss_accum / count_accum if count_accum > 0 else float("nan")
 
 
-trnLabel = sparse_matrix_to_sparse_coo(trnLabel)
+trnLabel = sparse_matrix_to_sparse_coo(trnLabel).to(device)
 
 
 @torch.no_grad()
@@ -414,7 +414,7 @@ def test(loader: NeighborLoader, desc: str, target=None) -> np.ndarray:
                 selected_scores, args.eval_k,
                 dim=1)  # Shape: (num_user, args.eval_k)
 
-            pred_mini = random_items[top_k_indices.tolist()]
+            pred_mini = torch.gather(random_items, 1, top_k_indices)
         else:
             _, pred_mini = torch.topk(scores, k=args.eval_k, dim=1)
         pred_list.append(pred_mini)
@@ -435,7 +435,7 @@ for epoch in range(1, args.epochs + 1):
     print(f"Epoch: {epoch:02d}, Train loss: {train_loss}")
     test_pred = test(loader_dict["test"], desc="Test", target=target_list)
     test_metrics = calculate_hit_rate(test_pred, target_list)
-    print(f"Best test metrics: {test_metrics}")
+    print(f"Best test metrics on next best action: {test_metrics}")
 
 test_pred = test(loader_dict["test"], desc="Test", target=target_list)
 test_metrics = calculate_hit_rate(test_pred, target_list)
