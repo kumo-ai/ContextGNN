@@ -380,8 +380,8 @@ def test(model: torch.nn.Module, loader: NeighborLoader, desc: str, stage: str,
 loader_dict: Dict[str, NeighborLoader] = {}
 dst_nodes_dict = {}
 split_date: Dict[str, int] = {}
-split_date['train'] = 1110
-split_date['test'] = 1111
+split_date['train'] = 1112
+split_date['test'] = 1112
 
 num_src_nodes = data[src_entity_table].num_nodes
 num_dst_nodes = data[dst_entity_table].num_nodes
