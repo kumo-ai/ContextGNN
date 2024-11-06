@@ -231,10 +231,10 @@ if args.model == "idgnn":
     model_cls = IDGNN
 elif args.model in ["contextgnn", "shallowrhsgnn"]:
     model_search_space = {
-        "encoder_channels": [32, 64, 128, 256],
+        "encoder_channels": [32, 64, 128],
         "encoder_layers": [2, 4],
-        "channels": [32, 64, 128, 256],
-        "embedding_dim": [32, 64, 128, 256],
+        "channels": [32, 64, 128],
+        "embedding_dim": [32, 64, 128],
         "norm": ["layer_norm", "batch_norm"],
         "rhs_emb_mode": [
             RHSEmbeddingMode.FUSION, RHSEmbeddingMode.FEATURE,
