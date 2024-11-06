@@ -401,7 +401,7 @@ for split in ["train", "test"]:
         input_time=torch.full((num_src_nodes, ), split_date[split],
                               dtype=torch.long),
         subgraph_type="bidirectional",
-        batch_size=train_search_space['batch_size'],
+        batch_size=args.batch_size,
         temporal_strategy=args.temporal_strategy,
         shuffle=split == "train",
         num_workers=args.num_workers,
