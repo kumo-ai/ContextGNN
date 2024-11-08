@@ -370,8 +370,7 @@ def test(model: torch.nn.Module, loader: NeighborLoader, desc: str, stage: str,
             _, top_k_indices = torch.topk(
                 selected_scores, args.eval_k,
                 dim=1)  # Shape: (num_user, args.eval_k)
-
-            pred_mini = random_items[top_k_indices.tolist()]
+            pred_mini = random_items[torch.arange(random_items.size(0)).unsqueeze(1), top_k_indices]
         else:
             _, pred_mini = torch.topk(scores, k=args.eval_k, dim=1)
         pred_list.append(pred_mini)
