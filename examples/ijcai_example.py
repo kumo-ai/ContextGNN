@@ -32,11 +32,11 @@ parser.add_argument(
     default="contextgnn",
     choices=["contextgnn", "idgnn", "shallowrhsgnn"],
 )
-parser.add_argument("--lr", type=float, default=0.001)
-parser.add_argument("--epochs", type=int, default=100)
+parser.add_argument("--lr", type=float, default=0.0068315852437584815)
+parser.add_argument("--epochs", type=int, default=2)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=64)
-parser.add_argument("--channels", type=int, default=32)
+parser.add_argument("--channels", type=int, default=64)
 parser.add_argument("--aggr", type=str, default="sum")
 parser.add_argument("--num_layers", type=int, default=6)
 parser.add_argument("--num_neighbors", type=int, default=32)
@@ -44,7 +44,7 @@ parser.add_argument("--temporal_strategy", type=str, default="last")
 parser.add_argument("--max_steps_per_epoch", type=int, default=100)
 parser.add_argument("--num_workers", type=int, default=0)
 parser.add_argument("--eval_k", type=int, default=10)
-parser.add_argument("--gamma_rate", type=int, default=0.95)
+parser.add_argument("--gamma_rate", type=int, default=0.9564384518372194)
 parser.add_argument("--seed", type=int, default=42)
 args = parser.parse_args()
 
@@ -78,8 +78,8 @@ def sparse_matrix_to_sparse_coo(sci_sparse_matrix):
     return torch_sparse_tensor
 
 
-def calculate_hit_rate(pred: torch.Tensor, target: List[Optional[int]],
-                       num_candidates=None):
+def calculate_metrics(pred: torch.Tensor, target: List[Optional[int]],
+        top_k: Optional[int] = None):
     r"""Calculates hit rate when pred is a tensor and target is a list.
 
     Args:
@@ -89,18 +89,32 @@ def calculate_hit_rate(pred: torch.Tensor, target: List[Optional[int]],
             value is None if user doesn't have a next best action.
             The value is the dst node id if there is a next best
             action.
-        num_candidates(int, optional): The number of candidates to
-            calculate any metrics
+        top_k(int, optional): top_k metrics to look at
     """
     hits = 0
     total = 0
+    ndcg = 0
+    k = top_k if top_k is not None else len(pred[0])
     for i in range(len(target)):
         if target[i] is not None:
             total += 1
-            if target[i] in pred[i]:
+            if target[i] in pred[i][:k]:
                 hits += 1
+                if k != 1:
+                    ndcg += np.reciprocal(np.log2(pred[i][:k].tolist().index(target[i])+2))
 
-    return hits / total
+    return hits / total, ndcg/total
+
+
+def ndcg(pred, target: List[Optional[int]], top_k: Optional[int] = None):
+    ndcg = 0
+    k = top_k if top_k is not None else len(pred[0])
+    for i in range(len(target)): 
+        if target[i] is not None:
+            ndcg += np.reciprocal(np.log2(pred[i][:k].index(target[i])+2))
+
+    return ndcg
+
 
 
 def calculate_hit_rate_on_sparse_target(pred: torch.Tensor,
@@ -254,10 +268,10 @@ elif args.model == "contextgnn":
         num_layers=args.num_layers,
         channels=args.channels,
         aggr="sum",
-        norm="layer_norm",
+        norm="batch_norm",
         embedding_dim=64,
         torch_frame_model_kwargs={
-            "channels": 128,
+            "channels": 32,
             "num_layers": 4,
         },
     ).to(device)
@@ -398,13 +412,13 @@ def test(loader: NeighborLoader, desc: str, target=None) -> np.ndarray:
                 # include the target item if it is there
                 target_item = target[user_idx]
                 if target_item is not None:
-                    random_items[i, 0] = target_item
+                    random_items[i, -1] = target_item
             selected_scores = torch.gather(scores, 1, random_items)
             _, top_k_indices = torch.topk(
                 selected_scores, args.eval_k,
-                dim=1)  # Shape: (num_user, args.eval_k)
+                dim=1, sorted=True)  # Shape: (num_user, args.eval_k)
 
-            pred_mini = torch.gather(random_items, 1, top_k_indices)
+            pred_mini = random_items[torch.arange(random_items.size(0)).unsqueeze(1), top_k_indices]
         else:
             _, pred_mini = torch.topk(scores, k=args.eval_k, dim=1)
         pred_list.append(pred_mini)
@@ -423,10 +437,13 @@ with open(osp.join(path, 'tst_int'), 'rb') as fs:
 for epoch in range(1, args.epochs + 1):
     train_loss = train()
     print(f"Epoch: {epoch:02d}, Train loss: {train_loss}")
-    test_pred = test(loader_dict["test"], desc="Test", target=target_list)
-    test_metrics = calculate_hit_rate(test_pred, target_list)
-    print(f"Best test metrics on next best action: {test_metrics}")
+    if epoch % 5 == 0:
+        test_pred = test(loader_dict["test"], desc="Test", target=target_list)
+        test_metrics = calculate_metrics(test_pred, target_list)
+        print(f"Best test metrics on next best action: {test_metrics}")
 
 test_pred = test(loader_dict["test"], desc="Test", target=target_list)
-test_metrics = calculate_hit_rate(test_pred, target_list)
-print(f"Best test metrics: {test_metrics}")
+hr_1, _ = calculate_metrics(test_pred, target_list, 1)
+hr_5, ndcg_5 = calculate_metrics(test_pred, target_list, 5)
+hr_10, ndcg_10 = calculate_metrics(test_pred, target_list, 10)
+print(f"Best test metrics: HR@1 {hr_1} HR@5 {hr_5} HR@10 {hr_10} ndcg_5 {ndcg_5} ndcg_10 {ndcg_10}")
