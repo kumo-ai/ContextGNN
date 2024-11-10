@@ -39,7 +39,7 @@ parser.add_argument(
     choices=["contextgnn", "idgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--lr", type=float, default=0.001)
-parser.add_argument("--epochs", type=int, default=15)
+parser.add_argument("--epochs", type=int, default=3)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--num_trials", type=int, default=10,
                     help="Number of Optuna-based hyper-parameter tuning.")
@@ -94,10 +94,9 @@ def sparse_matrix_to_sparse_coo(sci_sparse_matrix):
     return torch_sparse_tensor
 
 
-def calculate_hit_rate(pred: torch.Tensor, target: List[Optional[int]],
-                       num_candidates=None):
+def calculate_metrics(pred: torch.Tensor, target: List[Optional[int]],
+        top_k: Optional[int] = None):
     r"""Calculates hit rate when pred is a tensor and target is a list.
-
     Args:
         pred (torch.Tensor): Prediction tensor of size (num_entity,
             num_target_predicitons_per_entity).
@@ -105,18 +104,21 @@ def calculate_hit_rate(pred: torch.Tensor, target: List[Optional[int]],
             value is None if user doesn't have a next best action.
             The value is the dst node id if there is a next best
             action.
-        num_candidates(int, optional): The number of candidates to
-            calculate any metrics
+        top_k(int, optional): top_k metrics to look at
     """
     hits = 0
     total = 0
+    ndcg = 0
+    k = top_k if top_k is not None else len(pred[0])
     for i in range(len(target)):
         if target[i] is not None:
             total += 1
-            if target[i] in pred[i]:
+            if target[i] in pred[i][:k]:
                 hits += 1
+                if k != 1:
+                    ndcg += np.reciprocal(np.log2(pred[i][:k].tolist().index(target[i])+2))
 
-    return hits / total
+    return hits / total, ndcg/total
 
 
 def calculate_hit_rate_on_sparse_target(pred: torch.Tensor,
@@ -237,7 +239,7 @@ elif args.model in ["contextgnn", "shallowrhsgnn"]:
         "embedding_dim": [32, 64, 128],
         "norm": ["layer_norm", "batch_norm"],
         "rhs_emb_mode": [
-            RHSEmbeddingMode.FUSION, RHSEmbeddingMode.FEATURE,
+            RHSEmbeddingMode.FUSION,
             RHSEmbeddingMode.LOOKUP
         ]
     }
@@ -308,7 +310,7 @@ def train(model: torch.nn.Module, optimizer: torch.optim.Optimizer,
     return loss_accum / count_accum if count_accum > 0 else float("nan")
 
 
-trnLabel = sparse_matrix_to_sparse_coo(trnLabel)
+trnLabel = sparse_matrix_to_sparse_coo(trnLabel).to(device)
 
 
 @torch.no_grad()
@@ -351,10 +353,8 @@ def test(model: torch.nn.Module, loader: NeighborLoader, desc: str, stage: str,
                     scores.device)  # Shape: (batch_user, 100)
             for i in range(batch_size):
                 user_idx = batch[src_entity_table].n_id[i]
-                assert trnLabel is not None
                 pos_item_per_user = trnLabel[user_idx].coalesce().indices(
                 ).reshape(-1)
-                pos_item_per_user = pos_item_per_user.to(device)
 
                 indices = torch.randint(0, all_sampled_rhs.size(0), (1000, ))
                 sampled_items = all_sampled_rhs[indices]
@@ -365,11 +365,11 @@ def test(model: torch.nn.Module, loader: NeighborLoader, desc: str, stage: str,
                 # include the target item if it is there
                 target_item = target[user_idx]
                 if target_item is not None:
-                    random_items[i, 0] = target_item
+                    random_items[i, -1] = target_item
             selected_scores = torch.gather(scores, 1, random_items)
             _, top_k_indices = torch.topk(
                 selected_scores, args.eval_k,
-                dim=1)  # Shape: (num_user, args.eval_k)
+                dim=1, sorted=True)  # Shape: (num_user, args.eval_k)
             pred_mini = random_items[torch.arange(random_items.size(0)).unsqueeze(1), top_k_indices]
         else:
             _, pred_mini = torch.topk(scores, k=args.eval_k, dim=1)
@@ -459,25 +459,13 @@ def train_and_eval_with_cfg(
         optimizer.zero_grad()
         lr_scheduler.step()
         print(f"Train Loss: {train_loss:.4f}")
-        if epoch % 5 == 0:
-            # Check if we should early stop
-            test_pred = test(model, loader_dict["test"], "test", "test",
+    test_pred = test(model, loader_dict["test"], "test", "test",
                              target=target_list)
-            test_metric = calculate_hit_rate(test_pred, target_list)
-            print(f"Test metric: {test_metric:.4f}")
-            if test_metric > best_test_metric:
-                best_test_metric = test_metric
-            if test_metric < best_test_metric - TEST_LOSS_DELTA:
-                print(f"Best test: {best_test_metric:.4f}")
-                return best_test_metric
-
-            # Check if we should prune the trials
-            if trial is not None:
-                trial.report(test_metric, epoch)
-                if trial.should_prune():
-                    raise optuna.TrialPruned()
-    print(f"Test metric: {best_test_metric:.4f}")
-    return test_metric
+    hr_1, _ = calculate_metrics(test_pred, target_list, 1)
+    hr_5, ndcg_5 = calculate_metrics(test_pred, target_list, 5)
+    hr_10, ndcg_10 = calculate_metrics(test_pred, target_list, 10)
+    print(f"Best test metrics: HR@1 {hr_1} HR@5 {hr_5} HR@10 {hr_10} ndcg_5 {ndcg_5} ndcg_10 {ndcg_10}")
+    return ndcg_10
 
 
 def objective(trial: optuna.trial.Trial) -> float:
