@@ -2,35 +2,34 @@ import argparse
 import os.path as osp
 import pickle
 import warnings
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Union
 
 import numpy as np
-import pandas as pd
-import scipy.sparse as sp
 import torch
 import torch.nn.functional as F
 from relbench.modeling.loader import SparseTensor
 from torch import Tensor
 from torch.optim.lr_scheduler import ExponentialLR
-from torch_frame import stype
-from torch_frame.data import Dataset
-from torch_geometric.data import HeteroData
 from torch_geometric.loader import NeighborLoader
 from torch_geometric.seed import seed_everything
-from torch_geometric.utils import sort_edge_index
 from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from torch_geometric.utils.map import map_index
 from tqdm import tqdm
 
+from contextgnn.data.ijcai_contest import IJCAI_Contest
 from contextgnn.nn.models import IDGNN, ContextGNN, ShallowRHSGNN
-from contextgnn.utils import RHSEmbeddingMode
+from contextgnn.utils import (
+    RHSEmbeddingMode,
+    calculate_hit_rate_ndcg,
+    sparse_matrix_to_sparse_coo,
+)
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
     "--model",
     type=str,
     default="contextgnn",
-    choices=["contextgnn", "idgnn", "shallowrhsgnn"],
+    choices=["contextgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--lr", type=float, default=0.0068315852437584815)
 parser.add_argument("--epochs", type=int, default=2)
@@ -38,7 +37,7 @@ parser.add_argument("--eval_epochs_interval", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=64)
 parser.add_argument("--channels", type=int, default=64)
 parser.add_argument("--aggr", type=str, default="sum")
-parser.add_argument("--num_layers", type=int, default=6)
+parser.add_argument("--num_layers", type=int, default=2)
 parser.add_argument("--num_neighbors", type=int, default=32)
 parser.add_argument("--temporal_strategy", type=str, default="last")
 parser.add_argument("--max_steps_per_epoch", type=int, default=100)
@@ -54,159 +53,15 @@ if torch.cuda.is_available():
     torch.cuda.empty_cache()
 seed_everything(args.seed)
 
-path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data',
-                'ijcai-contest')
-behs = ['click', 'fav', 'cart', 'buy']
 src_entity_table = 'user'
 dst_entity_table = 'item'
-
-data = HeteroData()
-
-
-def sparse_matrix_to_sparse_coo(sci_sparse_matrix):
-    sci_sparse_coo = sci_sparse_matrix.tocoo()
-
-    # Get the data, row indices, and column indices
-    values = torch.tensor(sci_sparse_coo.data, dtype=torch.int64)
-    row_indices = torch.tensor(sci_sparse_coo.row, dtype=torch.int64)
-    col_indices = torch.tensor(sci_sparse_coo.col, dtype=torch.int64)
-
-    # Create a PyTorch sparse tensor
-    torch_sparse_tensor = torch.sparse_coo_tensor(
-        indices=torch.stack([row_indices, col_indices]), values=values,
-        size=sci_sparse_matrix.shape)
-    return torch_sparse_tensor
-
-
-def calculate_metrics(pred: torch.Tensor, target: List[Optional[int]],
-        top_k: Optional[int] = None):
-    r"""Calculates hit rate when pred is a tensor and target is a list.
-
-    Args:
-        pred (torch.Tensor): Prediction tensor of size (num_entity,
-            num_target_predicitons_per_entity).
-        target (List[int]): A list of shape num_entity, where the
-            value is None if user doesn't have a next best action.
-            The value is the dst node id if there is a next best
-            action.
-        top_k(int, optional): top_k metrics to look at
-    """
-    hits = 0
-    total = 0
-    ndcg = 0
-    k = top_k if top_k is not None else len(pred[0])
-    for i in range(len(target)):
-        if target[i] is not None:
-            total += 1
-            if target[i] in pred[i][:k]:
-                hits += 1
-                if k != 1:
-                    ndcg += np.reciprocal(np.log2(pred[i][:k].tolist().index(target[i])+2))
-
-    return hits / total, ndcg/total
-
-
-def ndcg(pred, target: List[Optional[int]], top_k: Optional[int] = None):
-    ndcg = 0
-    k = top_k if top_k is not None else len(pred[0])
-    for i in range(len(target)): 
-        if target[i] is not None:
-            ndcg += np.reciprocal(np.log2(pred[i][:k].index(target[i])+2))
-
-    return ndcg
-
-
-
-def calculate_hit_rate_on_sparse_target(pred: torch.Tensor,
-                                        target: torch.sparse.Tensor):
-    r"""Calculates hit rate when pred is a tensor and target is a sparse
-    tensor
-    Args:
-        pred (torch.Tensor): Prediction tensor of size (num_entity,
-            num_target_predicitons_per_entity).
-        target (torch.sparse.Tensor): Target sparse tensor.
-    """
-    crow_indices = target.crow_indices().to(pred.device)
-    col_indices = target.col_indices().to(pred.device)
-    values = target.values()
-    assert values is not None
-    # Iterate through each row and check if predictions match ground truth
-    hits = 0
-    num_rows = pred.shape[0]
-
-    for i in range(num_rows):
-        # Get the ground truth indices for this row
-        row_start = crow_indices[i].item()
-        row_end = crow_indices[i + 1].item()
-        assert isinstance(row_start, int)
-        assert isinstance(row_end, int)
-        dst_indices = col_indices[row_start:row_end]
-        bool_indices = values[row_start:row_end]
-        true_indices = dst_indices[bool_indices]
-
-        # Check if any of the predicted values match the true indices
-        pred_indices = pred[i]
-        if torch.isin(pred_indices, true_indices).any():
-            hits += 1
-
-    # Callculate hit rate
-    hit_rate = hits / num_rows
-    return hit_rate
-
-
-def create_edge(data, behavior, beh_idx, pkey_name, pkey_idx):
-    # fkey -> pkey edges
-    edge_index = torch.stack([beh_idx, pkey_idx], dim=0)
-    edge_type = (behavior, f"f2p_{behavior}", pkey_name)
-    data[edge_type].edge_index = sort_edge_index(edge_index)
-
-    # pkey -> fkey edges.
-    # "rev_" is added so that PyG loader recognizes the reverse edges
-    edge_index = torch.stack([pkey_idx, beh_idx], dim=0)
-    edge_type = (pkey_name, f"rev_f2p_{behavior}", behavior)
-    data[edge_type].edge_index = sort_edge_index(edge_index)
-
-
-col_stats_dict = {}
-dst_nodes = None
-trnLabel = None
-for i in range(len(behs)):
-    behavior = behs[i]
-    with open(osp.join(path, 'trn_' + behavior), 'rb') as fs:
-        mat = pickle.load(fs)
-    if i == 0:
-        dataset = Dataset(pd.DataFrame({"__const__": np.ones(mat.shape[0])}),
-                          col_to_stype={"__const__": stype.numerical})
-        dataset.materialize()
-        data['user'].tf = dataset.tensor_frame
-        col_stats_dict['user'] = dataset.col_stats
-        dataset = Dataset(pd.DataFrame({"__const__": np.ones(mat.shape[1])}),
-                          col_to_stype={"__const__": stype.numerical})
-        dataset.materialize()
-        data['item'].tf = dataset.tensor_frame
-        col_stats_dict['item'] = dataset.col_stats
-        data['user'].n_id = torch.arange(mat.shape[0], dtype=torch.long)
-        data['item'].n_id = torch.arange(mat.shape[1], dtype=torch.long)
-    col_to_stype = {"time": stype.timestamp}
-    dataset = Dataset(pd.DataFrame({'time': mat.data}),
-                      col_to_stype=col_to_stype)
-    dataset.materialize()
-    col_stats_dict[behavior] = dataset.col_stats
-    data[behavior].tf = dataset.tensor_frame
-    data[behavior].time = torch.tensor(mat.data, dtype=torch.long)
-    data[behavior].x = torch.tensor(np.ones(len(mat.data))).view(-1, 1)
-    data[behavior].n_id = torch.arange(len(mat.data), dtype=torch.long)
-    coo_mat = sp.coo_matrix(mat)
-    if behavior == 'buy':
-        dst_nodes = coo_mat
-        trnLabel = 1 * (mat != 0)
-    beh_idx = torch.arange(len(coo_mat.data), dtype=torch.long)
-    create_edge(data, behavior, beh_idx, src_entity_table,
-                torch.tensor(coo_mat.row, dtype=torch.long))
-    create_edge(data, behavior, beh_idx, dst_entity_table,
-                torch.tensor(coo_mat.col, dtype=torch.long))
-
-assert dst_nodes is not None
+path = osp.join(osp.dirname(osp.realpath(__file__)), '..', '.data',
+                'ijcai-contest')
+dataset = IJCAI_Contest(path)
+data = dataset.datat
+dst_nodes = dataset.dst_nodes
+col_stats_dict = dataset.col_stats_dict
+trnLabel = dataset.trnLabel
 
 num_neighbors = [
     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
@@ -244,21 +99,7 @@ for split in ["train", "test"]:
     )
 model: Union[IDGNN, ContextGNN, ShallowRHSGNN]
 
-if args.model == "idgnn":
-    model = IDGNN(
-        data=data,
-        col_stats_dict=col_stats_dict,
-        num_layers=args.num_layers,
-        channels=args.channels,
-        out_channels=1,
-        aggr=args.aggr,
-        norm="layer_norm",
-        torch_frame_model_kwargs={
-            "channels": 128,
-            "num_layers": 4,
-        },
-    ).to(device)
-elif args.model == "contextgnn":
+if args.model == "contextgnn":
     model = ContextGNN(
         data=data,
         col_stats_dict=col_stats_dict,
@@ -403,6 +244,11 @@ def test(loader: NeighborLoader, desc: str, target=None) -> np.ndarray:
                 pos_item_per_user = trnLabel[user_idx].coalesce().indices(
                 ).reshape(-1)
 
+                # We need to select 98 negative items.
+                # It is too expensive to do isin on the entire set of items
+                # Instead, we first quick sample 1000 items and find 98
+                # negative items for this user. This works because the true
+                # item set is very sparse.
                 indices = torch.randint(0, all_sampled_rhs.size(0), (1000, ))
                 sampled_items = all_sampled_rhs[indices]
 
@@ -415,10 +261,11 @@ def test(loader: NeighborLoader, desc: str, target=None) -> np.ndarray:
                     random_items[i, -1] = target_item
             selected_scores = torch.gather(scores, 1, random_items)
             _, top_k_indices = torch.topk(
-                selected_scores, args.eval_k,
-                dim=1, sorted=True)  # Shape: (num_user, args.eval_k)
+                selected_scores, args.eval_k, dim=1,
+                sorted=True)  # Shape: (num_user, args.eval_k)
 
-            pred_mini = random_items[torch.arange(random_items.size(0)).unsqueeze(1), top_k_indices]
+            pred_mini = random_items[
+                torch.arange(random_items.size(0)).unsqueeze(1), top_k_indices]
         else:
             _, pred_mini = torch.topk(scores, k=args.eval_k, dim=1)
         pred_list.append(pred_mini)
@@ -439,11 +286,12 @@ for epoch in range(1, args.epochs + 1):
     print(f"Epoch: {epoch:02d}, Train loss: {train_loss}")
     if epoch % 5 == 0:
         test_pred = test(loader_dict["test"], desc="Test", target=target_list)
-        test_metrics = calculate_metrics(test_pred, target_list)
+        test_metrics = calculate_hit_rate_ndcg(test_pred, target_list)
         print(f"Best test metrics on next best action: {test_metrics}")
 
 test_pred = test(loader_dict["test"], desc="Test", target=target_list)
-hr_1, _ = calculate_metrics(test_pred, target_list, 1)
-hr_5, ndcg_5 = calculate_metrics(test_pred, target_list, 5)
-hr_10, ndcg_10 = calculate_metrics(test_pred, target_list, 10)
-print(f"Best test metrics: HR@1 {hr_1} HR@5 {hr_5} HR@10 {hr_10} ndcg_5 {ndcg_5} ndcg_10 {ndcg_10}")
+hr_1, _ = calculate_hit_rate_ndcg(test_pred, target_list, 1)
+hr_5, ndcg_5 = calculate_hit_rate_ndcg(test_pred, target_list, 5)
+hr_10, ndcg_10 = calculate_hit_rate_ndcg(test_pred, target_list, 10)
+print(f"Best test metrics: HR@1 {hr_1} HR@5 {hr_5} HR@10 {hr_10} "
+      f"ndcg_5 {ndcg_5} ndcg_10 {ndcg_10}")

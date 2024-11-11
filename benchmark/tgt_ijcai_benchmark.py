@@ -8,27 +8,26 @@ from typing import Any, Dict, List, Optional, Type, Union
 
 import numpy as np
 import optuna
-import pandas as pd
-import scipy.sparse as sp
 import torch
 import torch.nn.functional as F
 from relbench.modeling.loader import SparseTensor
 from torch import Tensor
 from torch.optim.lr_scheduler import ExponentialLR
-from torch_frame import stype
-from torch_frame.data import Dataset
-from torch_geometric.data import HeteroData
 from torch_geometric.loader import NeighborLoader
 from torch_geometric.seed import seed_everything
-from torch_geometric.utils import sort_edge_index
 from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from torch_geometric.utils.map import map_index
 from tqdm import tqdm
 
-from contextgnn.nn.models import IDGNN, ContextGNN, ShallowRHSGNN
-from contextgnn.utils import RHSEmbeddingMode
+from contextgnn.data.ijcai_contest import IJCAI_Contest
+from contextgnn.nn.models import ContextGNN, ShallowRHSGNN
+from contextgnn.utils import (
+    RHSEmbeddingMode,
+    calculate_hit_rate_ndcg,
+    sparse_matrix_to_sparse_coo,
+)
 
-TRAIN_CONFIG_KEYS = ["batch_size", "gamma_rate", "base_lr"]
+TRAIN_CONFIG_KEYS = ["gamma_rate", "base_lr"]
 TEST_LOSS_DELTA = 0.05
 
 parser = argparse.ArgumentParser()
@@ -36,7 +35,7 @@ parser.add_argument(
     "--model",
     type=str,
     default="contextgnn",
-    choices=["contextgnn", "idgnn", "shallowrhsgnn"],
+    choices=["contextgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--epochs", type=int, default=3)
@@ -67,184 +66,39 @@ if torch.cuda.is_available():
 seed_everything(args.seed)
 
 # Constructing data
-path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data',
+path = osp.join(osp.dirname(osp.realpath(__file__)), '..', '.data',
                 'ijcai-contest')
 behs = ['click', 'fav', 'cart', 'buy']
 src_entity_table = 'user'
 dst_entity_table = 'item'
 
-data = HeteroData()
-
 with open(osp.join(path, 'tst_int'), 'rb') as fs:
     target_list = pickle.load(fs)
 
-
-def sparse_matrix_to_sparse_coo(sci_sparse_matrix):
-    sci_sparse_coo = sci_sparse_matrix.tocoo()
-
-    # Get the data, row indices, and column indices
-    values = torch.tensor(sci_sparse_coo.data, dtype=torch.int64)
-    row_indices = torch.tensor(sci_sparse_coo.row, dtype=torch.int64)
-    col_indices = torch.tensor(sci_sparse_coo.col, dtype=torch.int64)
-
-    # Create a PyTorch sparse tensor
-    torch_sparse_tensor = torch.sparse_coo_tensor(
-        indices=torch.stack([row_indices, col_indices]), values=values,
-        size=sci_sparse_matrix.shape)
-    return torch_sparse_tensor
-
-
-def calculate_metrics(pred: torch.Tensor, target: List[Optional[int]],
-        top_k: Optional[int] = None):
-    r"""Calculates hit rate when pred is a tensor and target is a list.
-    Args:
-        pred (torch.Tensor): Prediction tensor of size (num_entity,
-            num_target_predicitons_per_entity).
-        target (List[int]): A list of shape num_entity, where the
-            value is None if user doesn't have a next best action.
-            The value is the dst node id if there is a next best
-            action.
-        top_k(int, optional): top_k metrics to look at
-    """
-    hits = 0
-    total = 0
-    ndcg = 0
-    k = top_k if top_k is not None else len(pred[0])
-    for i in range(len(target)):
-        if target[i] is not None:
-            total += 1
-            if target[i] in pred[i][:k]:
-                hits += 1
-                if k != 1:
-                    ndcg += np.reciprocal(np.log2(pred[i][:k].tolist().index(target[i])+2))
-
-    return hits / total, ndcg/total
-
-
-def calculate_hit_rate_on_sparse_target(pred: torch.Tensor,
-                                        target: torch.sparse.Tensor):
-    r"""Calculates hit rate when pred is a tensor and target is a sparse
-    tensor
-    Args:
-        pred (torch.Tensor): Prediction tensor of size (num_entity,
-            num_target_predicitons_per_entity).
-        target (torch.sparse.Tensor): Target sparse tensor.
-    """
-    crow_indices = target.crow_indices()
-    col_indices = target.col_indices()
-    values = target.values()
-    assert values is not None
-    # Iterate through each row and check if predictions match ground truth
-    hits = 0
-    num_rows = pred.shape[0]
-
-    for i in range(num_rows):
-        # Get the ground truth indices for this row
-        row_start = crow_indices[i].item()
-        row_end = crow_indices[i + 1].item()
-        assert isinstance(row_start, int)
-        assert isinstance(row_end, int)
-        dst_indices = col_indices[row_start:row_end]
-        bool_indices = values[row_start:row_end]
-        true_indices = dst_indices[bool_indices]
-
-        # Check if any of the predicted values match the true indices
-        pred_indices = pred[i]
-        if torch.isin(pred_indices, true_indices).any():
-            hits += 1
-
-    # Callculate hit rate
-    hit_rate = hits / num_rows
-    return hit_rate
-
-
-def create_edge(data, behavior, beh_idx, pkey_name, pkey_idx):
-    # fkey -> pkey edges
-    edge_index = torch.stack([beh_idx, pkey_idx], dim=0)
-    edge_type = (behavior, f"f2p_{behavior}", pkey_name)
-    data[edge_type].edge_index = sort_edge_index(edge_index)
-
-    # pkey -> fkey edges.
-    # "rev_" is added so that PyG loader recognizes the reverse edges
-    edge_index = torch.stack([pkey_idx, beh_idx], dim=0)
-    edge_type = (pkey_name, f"rev_f2p_{behavior}", behavior)
-    data[edge_type].edge_index = sort_edge_index(edge_index)
-
-
-col_stats_dict = {}
-dst_nodes = None
-trnLabel = None
-for i in range(len(behs)):
-    behavior = behs[i]
-    with open(osp.join(path, 'trn_' + behavior), 'rb') as fs:
-        mat = pickle.load(fs)
-    if i == 0:
-        dataset = Dataset(pd.DataFrame({"__const__": np.ones(mat.shape[0])}),
-                          col_to_stype={"__const__": stype.numerical})
-        dataset.materialize()
-        data['user'].tf = dataset.tensor_frame
-        col_stats_dict['user'] = dataset.col_stats
-        dataset = Dataset(pd.DataFrame({"__const__": np.ones(mat.shape[1])}),
-                          col_to_stype={"__const__": stype.numerical})
-        dataset.materialize()
-        data['item'].tf = dataset.tensor_frame
-        col_stats_dict['item'] = dataset.col_stats
-        data['user'].n_id = torch.arange(mat.shape[0], dtype=torch.long)
-        data['item'].n_id = torch.arange(mat.shape[1], dtype=torch.long)
-    col_to_stype = {"time": stype.timestamp}
-    dataset = Dataset(pd.DataFrame({'time': mat.data}),
-                      col_to_stype=col_to_stype)
-    dataset.materialize()
-    col_stats_dict[behavior] = dataset.col_stats
-    data[behavior].tf = dataset.tensor_frame
-    data[behavior].time = torch.tensor(mat.data, dtype=torch.long)
-    data[behavior].x = torch.tensor(np.ones(len(mat.data))).view(-1, 1)
-    data[behavior].n_id = torch.arange(len(mat.data), dtype=torch.long)
-    coo_mat = sp.coo_matrix(mat)
-    if behavior == 'buy':
-        dst_nodes = coo_mat
-        trnLabel = 1 * (mat != 0)
-    beh_idx = torch.arange(len(coo_mat.data), dtype=torch.long)
-    create_edge(data, behavior, beh_idx, src_entity_table,
-                torch.tensor(coo_mat.row, dtype=torch.long))
-    create_edge(data, behavior, beh_idx, dst_entity_table,
-                torch.tensor(coo_mat.col, dtype=torch.long))
-
-assert dst_nodes is not None
+path = osp.join(osp.dirname(osp.realpath(__file__)), '..', '.data',
+                'ijcai-contest')
+dataset = IJCAI_Contest(path)
+data = dataset.datat
+dst_nodes = dataset.dst_nodes
+col_stats_dict = dataset.col_stats_dict
+trnLabel = dataset.trnLabel
 
 num_neighbors = [
     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
 ]
 
-model_cls: Type[Union[IDGNN, ContextGNN, ShallowRHSGNN]]
+model_cls: Type[Union[ContextGNN, ShallowRHSGNN]]
 
-if args.model == "idgnn":
-    model_search_space = {
-        "encoder_channels": [64, 128, 256],
-        "encoder_layers": [2, 4, 8],
-        "channels": [64, 128, 256],
-        "norm": ["layer_norm", "batch_norm"]
-    }
-    train_search_space = {
-        "batch_size": [256, 512],
-        "base_lr": [0.0001, 0.01],
-        "gamma_rate": [0.9, 0.95, 1.],
-    }
-    model_cls = IDGNN
-elif args.model in ["contextgnn", "shallowrhsgnn"]:
+if args.model in ["contextgnn", "shallowrhsgnn"]:
     model_search_space = {
         "encoder_channels": [32, 64, 128],
         "encoder_layers": [2, 4],
         "channels": [32, 64, 128],
         "embedding_dim": [32, 64, 128],
         "norm": ["layer_norm", "batch_norm"],
-        "rhs_emb_mode": [
-            RHSEmbeddingMode.FUSION,
-            RHSEmbeddingMode.LOOKUP
-        ]
+        "rhs_emb_mode": [RHSEmbeddingMode.FUSION, RHSEmbeddingMode.LOOKUP]
     }
     train_search_space = {
-        "batch_size": [128, 256],
         "base_lr": [0.001, 0.01],
         "gamma_rate": [0.8, 1.],
     }
@@ -368,9 +222,10 @@ def test(model: torch.nn.Module, loader: NeighborLoader, desc: str, stage: str,
                     random_items[i, -1] = target_item
             selected_scores = torch.gather(scores, 1, random_items)
             _, top_k_indices = torch.topk(
-                selected_scores, args.eval_k,
-                dim=1, sorted=True)  # Shape: (num_user, args.eval_k)
-            pred_mini = random_items[torch.arange(random_items.size(0)).unsqueeze(1), top_k_indices]
+                selected_scores, args.eval_k, dim=1,
+                sorted=True)  # Shape: (num_user, args.eval_k)
+            pred_mini = random_items[
+                torch.arange(random_items.size(0)).unsqueeze(1), top_k_indices]
         else:
             _, pred_mini = torch.topk(scores, k=args.eval_k, dim=1)
         pred_list.append(pred_mini)
@@ -441,7 +296,6 @@ def train_and_eval_with_cfg(
     # Use train_cfg to set up training procedure
     optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg["base_lr"])
     lr_scheduler = ExponentialLR(optimizer, gamma=train_cfg["gamma_rate"])
-    best_test_metric = 0.0
 
     for epoch in range(1, args.epochs + 1):
         train_sparse_tensor = SparseTensor(dst_nodes_dict["train"],
@@ -460,11 +314,12 @@ def train_and_eval_with_cfg(
         lr_scheduler.step()
         print(f"Train Loss: {train_loss:.4f}")
     test_pred = test(model, loader_dict["test"], "test", "test",
-                             target=target_list)
-    hr_1, _ = calculate_metrics(test_pred, target_list, 1)
-    hr_5, ndcg_5 = calculate_metrics(test_pred, target_list, 5)
-    hr_10, ndcg_10 = calculate_metrics(test_pred, target_list, 10)
-    print(f"Best test metrics: HR@1 {hr_1} HR@5 {hr_5} HR@10 {hr_10} ndcg_5 {ndcg_5} ndcg_10 {ndcg_10}")
+                     target=target_list)
+    hr_1, _ = calculate_hit_rate_ndcg(test_pred, target_list, 1)
+    hr_5, ndcg_5 = calculate_hit_rate_ndcg(test_pred, target_list, 5)
+    hr_10, ndcg_10 = calculate_hit_rate_ndcg(test_pred, target_list, 10)
+    print(f"Best test metrics: HR@1 {hr_1} HR@5 {hr_5} HR@10 {hr_10} "
+          f"ndcg_5 {ndcg_5} ndcg_10 {ndcg_10}")
     return ndcg_10
 
 
