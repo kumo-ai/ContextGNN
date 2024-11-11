@@ -1,3 +1,7 @@
+"""Results running with the current setting on 48G memory machine:
+Best test metrics: HR@1 0.4113 HR@5 0.6031 HR@10 0.6671
+ndcg_5 0.5133189321177055 ndcg_10 0.5343443259121663.
+"""
 import argparse
 import os
 import os.path as osp
