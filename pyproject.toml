@@ -6,7 +6,7 @@ build-backend="flit_core.buildapi"
 name="contextgnn"
 version="0.0.0"
 authors=[
-    {name="PyG Team", email="team@pyg.org"},
+    {name="xxx Team", email="team@xxx.org"},
 ]
 description="Library for ContextGNN"
 readme="README.md"
@@ -40,12 +40,6 @@ full=[
     "sentence-transformers",
     "optuna",
 ]
-
-[project.urls]
-homepage="https://pyg.org"
-documentation="https://pytorch-frame.readthedocs.io"
-repository="https://github.com/pyg-team/pytorch-frame.git"
-changelog="https://github.com/pyg-team/pytorch-frame/blob/master/CHANGELOG.md"
 
 [tool.flit.module]
 name="contextgnn"
