@@ -4,7 +4,6 @@ import pickle
 import warnings
 from typing import Dict, List, Union
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 from relbench.modeling.loader import SparseTensor
@@ -203,7 +202,7 @@ trnLabel = sparse_matrix_to_sparse_coo(trnLabel).to(device)
 
 
 @torch.no_grad()
-def test(loader: NeighborLoader, desc: str, target=None) -> np.ndarray:
+def test(loader: NeighborLoader, desc: str, target=None) -> torch.Tensor:
     model.eval()
 
     pred_list: List[Tensor] = []
