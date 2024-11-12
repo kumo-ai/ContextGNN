@@ -173,7 +173,7 @@ trnLabel = sparse_matrix_to_sparse_coo(trnLabel).to(device)
 
 @torch.no_grad()
 def test(model: torch.nn.Module, loader: NeighborLoader, desc: str, stage: str,
-         target=None) -> np.ndarray:
+         target=None) -> torch.Tensor:
     model.eval()
 
     pred_list: List[Tensor] = []

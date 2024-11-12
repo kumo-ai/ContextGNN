@@ -276,7 +276,6 @@ def test(loader: NeighborLoader, desc: str, target=None) -> np.ndarray:
 state_dict = None
 best_val_metric = 0
 tune_metric = 'hr'
-val_metrics = dict()
 
 with open(osp.join(path, 'tst_int'), 'rb') as fs:
     target_list = pickle.load(fs)
@@ -286,8 +285,10 @@ for epoch in range(1, args.epochs + 1):
     print(f"Epoch: {epoch:02d}, Train loss: {train_loss}")
     if epoch % 5 == 0:
         test_pred = test(loader_dict["test"], desc="Test", target=target_list)
-        test_metrics = calculate_hit_rate_ndcg(test_pred, target_list)
-        print(f"Best test metrics on next best action: {test_metrics}")
+        hr_10, ndcg_10 = calculate_hit_rate_ndcg(test_pred, target_list,
+                                                 args.eval_k)
+        print(f"Best test metrics on next best action: Hit Rate@{args.eval_k}:"
+              f" {hr_10} NDCG@{args.eval_k}: {ndcg_10}")
 
 test_pred = test(loader_dict["test"], desc="Test", target=target_list)
 hr_1, _ = calculate_hit_rate_ndcg(test_pred, target_list, 1)
