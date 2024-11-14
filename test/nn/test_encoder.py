@@ -5,7 +5,7 @@ from relbench.modeling.utils import get_stype_proposal
 from torch_frame.config.text_embedder import TextEmbedderConfig
 from torch_frame.testing.text_embedder import HashTextEmbedder
 
-from hybridgnn.nn.encoder import DEFAULT_STYPE_ENCODER_DICT, HeteroEncoder
+from contextgnn.nn.encoder import DEFAULT_STYPE_ENCODER_DICT, HeteroEncoder
 
 
 def test_encoder(tmp_path):

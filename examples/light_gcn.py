@@ -32,7 +32,7 @@ from torch_geometric.seed import seed_everything
 from torch_geometric.utils import coalesce, to_undirected
 from tqdm import tqdm
 
-from hybridgnn.utils import GloveTextEmbedding
+from contextgnn.utils import GloveTextEmbedding
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-trial")

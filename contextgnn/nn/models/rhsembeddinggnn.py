@@ -5,9 +5,9 @@ from torch_frame.data.stats import StatType
 from torch_geometric.data import HeteroData
 from typing_extensions import Self
 
-from hybridgnn.nn.encoder import DEFAULT_STYPE_ENCODER_DICT
-from hybridgnn.nn.rhs_embedding import RHSEmbedding
-from hybridgnn.utils import RHSEmbeddingMode
+from contextgnn.nn.encoder import DEFAULT_STYPE_ENCODER_DICT
+from contextgnn.nn.rhs_embedding import RHSEmbedding
+from contextgnn.utils import RHSEmbeddingMode
 
 
 class RHSEmbeddingGNN(torch.nn.Module):

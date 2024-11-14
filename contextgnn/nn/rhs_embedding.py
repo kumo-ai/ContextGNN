@@ -7,7 +7,7 @@ from torch_frame.nn import StypeWiseFeatureEncoder
 from torch_frame.nn.models.resnet import FCResidualBlock
 from typing_extensions import Self
 
-from hybridgnn.utils import RHSEmbeddingMode
+from contextgnn.utils import RHSEmbeddingMode
 
 
 class RHSEmbedding(torch.nn.Module):

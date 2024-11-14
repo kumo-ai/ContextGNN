@@ -9,17 +9,17 @@ from torch_geometric.nn import MLP
 from torch_geometric.typing import NodeType
 from typing_extensions import Self
 
-from hybridgnn.nn.encoder import (
+from contextgnn.nn.encoder import (
     DEFAULT_STYPE_ENCODER_DICT,
     HeteroEncoder,
     HeteroTemporalEncoder,
 )
-from hybridgnn.nn.models import HeteroGraphSAGE
-from hybridgnn.nn.models.rhsembeddinggnn import RHSEmbeddingGNN
-from hybridgnn.utils import RHSEmbeddingMode
+from contextgnn.nn.models import HeteroGraphSAGE
+from contextgnn.nn.models.rhsembeddinggnn import RHSEmbeddingGNN
+from contextgnn.utils import RHSEmbeddingMode
 
 
-class HybridGNN(RHSEmbeddingGNN):
+class ContextGNN(RHSEmbeddingGNN):
     r"""Implementation of HybridGNN model."""
     def __init__(
         self,

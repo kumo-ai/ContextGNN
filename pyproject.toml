@@ -3,12 +3,12 @@ requires=["flit_core >=3.2,<4"]
 build-backend="flit_core.buildapi"
 
 [project]
-name="hybridgnn"
+name="contextgnn"
 version="0.0.0"
 authors=[
     {name="PyG Team", email="team@pyg.org"},
 ]
-description="Library for HybridGNN"
+description="Library for ContextGNN"
 readme="README.md"
 requires-python=">=3.8"
 keywords=[
@@ -48,7 +48,7 @@ repository="https://github.com/pyg-team/pytorch-frame.git"
 changelog="https://github.com/pyg-team/pytorch-frame/blob/master/CHANGELOG.md"
 
 [tool.flit.module]
-name="hybridgnn"
+name="contextgnn"
 
 [tool.ruff]  # https://docs.astral.sh/ruff/rules
 select = [
@@ -63,7 +63,7 @@ ignore = [
     "D107",  # Ignore "Missing docstring in __init__"
     "D205",  # Ignore "blank line required between summary line and description"
 ]
-src = ["hybridgnn"]
+src = ["contextgnn"]
 line-length = 80
 indent-width = 4
 target-version = "py38"
@@ -89,7 +89,7 @@ skip = [".gitignore", "__init__.py"]
 ignore = ["F811", "W503", "W504"]
 
 [tool.mypy]
-files = ["hybridgnn"]
+files = ["contextgnn"]
 install_types = true
 non_interactive = true
 ignore_missing_imports = true

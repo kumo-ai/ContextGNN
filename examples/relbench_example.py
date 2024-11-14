@@ -1,7 +1,7 @@
 """Example script to run the models in this repository.
 
 python relbench_example.py --dataset rel-trial --task site-sponsor-run
-    --model hybridgnn --epochs 10
+    --model contextgnn --epochs 10
 """
 
 import argparse
@@ -32,8 +32,8 @@ from torch_geometric.typing import NodeType
 from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from tqdm import tqdm
 
-from hybridgnn.nn.models import IDGNN, HybridGNN, ShallowRHSGNN
-from hybridgnn.utils import GloveTextEmbedding, RHSEmbeddingMode
+from contextgnn.nn.models import IDGNN, ContextGNN, ShallowRHSGNN
+from contextgnn.utils import GloveTextEmbedding, RHSEmbeddingMode
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-trial")
@@ -41,8 +41,8 @@ parser.add_argument("--task", type=str, default="site-sponsor-run")
 parser.add_argument(
     "--model",
     type=str,
-    default="hybridgnn",
-    choices=["hybridgnn", "idgnn", "shallowrhsgnn"],
+    default="contextgnn",
+    choices=["contextgnn", "idgnn", "shallowrhsgnn"],
 )
 parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--epochs", type=int, default=20)
@@ -117,7 +117,7 @@ for split in ["train", "val", "test"]:
         persistent_workers=args.num_workers > 0,
     )
 
-model: Union[IDGNN, HybridGNN, ShallowRHSGNN]
+model: Union[IDGNN, ContextGNN, ShallowRHSGNN]
 
 if args.model == "idgnn":
     model = IDGNN(
@@ -133,8 +133,8 @@ if args.model == "idgnn":
             "num_layers": 4,
         },
     ).to(device)
-elif args.model == "hybridgnn":
-    model = HybridGNN(
+elif args.model == "contextgnn":
+    model = ContextGNN(
         data=data,
         col_stats_dict=col_stats_dict,
         rhs_emb_mode=RHSEmbeddingMode.FUSION,
@@ -204,7 +204,7 @@ def train() -> float:
 
             loss = F.binary_cross_entropy_with_logits(out, target)
             numel = out.numel()
-        elif args.model in ['hybridgnn', 'shallowrhsgnn']:
+        elif args.model in ['contextgnn', 'shallowrhsgnn']:
             logits = model(batch, task.src_entity_table, task.dst_entity_table)
             edge_label_index = torch.stack([src_batch, dst_index], dim=0)
             loss = sparse_cross_entropy(logits, edge_label_index)
@@ -245,7 +245,7 @@ def test(loader: NeighborLoader, desc: str) -> np.ndarray:
                                  device=out.device)
             scores[batch[task.dst_entity_table].batch,
                    batch[task.dst_entity_table].n_id] = torch.sigmoid(out)
-        elif args.model in ['hybridgnn', 'shallowrhsgnn']:
+        elif args.model in ['contextgnn', 'shallowrhsgnn']:
             out = model(batch, task.src_entity_table,
                         task.dst_entity_table).detach()
             scores = torch.sigmoid(out)
