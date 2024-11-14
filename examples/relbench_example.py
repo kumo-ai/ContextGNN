@@ -11,6 +11,7 @@ import warnings
 from pathlib import Path
 from typing import Dict, List, Tuple, Union
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -53,11 +54,13 @@ parser.add_argument("--aggr", type=str, default="sum")
 parser.add_argument("--num_layers", type=int, default=4)
 parser.add_argument("--num_neighbors", type=int, default=128)
 parser.add_argument("--temporal_strategy", type=str, default="last")
-parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
+parser.add_argument("--max_steps_per_epoch", type=int, default=200)
 parser.add_argument("--num_workers", type=int, default=0)
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--cache_dir", type=str,
                     default=os.path.expanduser("~/.cache/relbench_examples"))
+parser.add_argument("--save-convergence-curve", action='store_true',
+                    default=False)
 args = parser.parse_args()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -172,6 +175,9 @@ else:
 
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
+train_losses = []
+val_losses = []
+
 
 def train() -> float:
     model.train()
@@ -209,6 +215,7 @@ def train() -> float:
             edge_label_index = torch.stack([src_batch, dst_index], dim=0)
             loss = sparse_cross_entropy(logits, edge_label_index)
             numel = len(batch[task.dst_entity_table].batch)
+            train_losses.append(float(loss))
         loss.backward()
 
         optimizer.step()
@@ -234,9 +241,12 @@ def test(loader: NeighborLoader, desc: str) -> np.ndarray:
     model.eval()
 
     pred_list: List[Tensor] = []
+    val_sparse_tensor = SparseTensor(dst_nodes_dict["val"][1], device=device)
     for batch in tqdm(loader, desc=desc):
         batch = batch.to(device)
         batch_size = batch[task.src_entity_table].batch_size
+        input_id = batch[task.src_entity_table].input_id
+        src_batch, dst_index = val_sparse_tensor[input_id]
 
         if args.model == "idgnn":
             out = (model.forward(batch, task.src_entity_table,
@@ -249,6 +259,9 @@ def test(loader: NeighborLoader, desc: str) -> np.ndarray:
             out = model(batch, task.src_entity_table,
                         task.dst_entity_table).detach()
             scores = torch.sigmoid(out)
+            edge_label_index = torch.stack([src_batch, dst_index], dim=0)
+            loss = sparse_cross_entropy(scores, edge_label_index)
+            val_losses.append(float(loss))
         else:
             raise ValueError(f"Unsupported model type: {args.model}.")
 
@@ -271,6 +284,15 @@ for epoch in range(1, args.epochs + 1):
         if val_metrics[tune_metric] > best_val_metric:
             best_val_metric = val_metrics[tune_metric]
             state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
+
+plt.figure(figsize=(10, 5))
+plt.plot(range(1, args.epochs + 1), train_losses, label='Training Loss')
+plt.plot(range(1, args.epochs + 1), val_losses, label='Validation Loss')
+plt.xlabel('Epochs')
+plt.ylabel('Loss')
+plt.title('Convergence Curve')
+plt.legend()
+plt.show()
 
 assert state_dict is not None
 model.load_state_dict(state_dict)
