@@ -13,7 +13,6 @@ from typing import Dict, List, Tuple, Union
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from relbench.base import Dataset, RecommendationTask, TaskType
 from relbench.datasets import get_dataset
 from relbench.modeling.graph import (
@@ -38,12 +37,6 @@ from contextgnn.utils import GloveTextEmbedding, RHSEmbeddingMode
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-trial")
 parser.add_argument("--task", type=str, default="site-sponsor-run")
-parser.add_argument(
-    "--model",
-    type=str,
-    default="contextgnn",
-    choices=["contextgnn", "idgnn", "shallowrhsgnn"],
-)
 parser.add_argument("--lr", type=float, default=0.001)
 parser.add_argument("--epochs", type=int, default=20)
 parser.add_argument("--eval_epochs_interval", type=int, default=1)
@@ -119,50 +112,16 @@ for split in ["train", "val", "test"]:
 
 model: Union[IDGNN, ContextGNN, ShallowRHSGNN]
 
-if args.model == "idgnn":
-    model = IDGNN(
-        data=data,
-        col_stats_dict=col_stats_dict,
-        num_layers=args.num_layers,
-        channels=args.channels,
-        out_channels=1,
-        aggr=args.aggr,
-        norm="layer_norm",
-        torch_frame_model_kwargs={
-            "channels": 128,
-            "num_layers": 4,
-        },
-    ).to(device)
-elif args.model == "contextgnn":
-    model = ContextGNN(
-        data=data, col_stats_dict=col_stats_dict,
-        rhs_emb_mode=RHSEmbeddingMode.FUSION,
-        dst_entity_table=task.dst_entity_table,
-        num_nodes=num_dst_nodes_dict["train"], num_layers=args.num_layers,
-        channels=args.channels, aggr="sum", norm="layer_norm",
-        embedding_dim=64, torch_frame_model_kwargs={
-            "channels": 128,
-            "num_layers": 4,
-        }, rhs_sample_size=100).to(device)
-elif args.model == 'shallowrhsgnn':
-    model = ShallowRHSGNN(
-        data=data,
-        col_stats_dict=col_stats_dict,
-        rhs_emb_mode=RHSEmbeddingMode.FUSION,
-        dst_entity_table=task.dst_entity_table,
-        num_nodes=num_dst_nodes_dict["train"],
-        num_layers=args.num_layers,
-        channels=args.channels,
-        aggr="sum",
-        norm="layer_norm",
-        embedding_dim=64,
-        torch_frame_model_kwargs={
-            "channels": 128,
-            "num_layers": 4,
-        },
-    ).to(device)
-else:
-    raise ValueError(f"Unsupported model type {args.model}.")
+model = ContextGNN(
+    data=data, col_stats_dict=col_stats_dict,
+    rhs_emb_mode=RHSEmbeddingMode.FUSION,
+    dst_entity_table=task.dst_entity_table,
+    num_nodes=num_dst_nodes_dict["train"], num_layers=args.num_layers,
+    channels=args.channels, aggr="sum", norm="layer_norm", embedding_dim=64,
+    torch_frame_model_kwargs={
+        "channels": 128,
+        "num_layers": 4,
+    }, rhs_sample_size=100).to(device)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
@@ -184,27 +143,12 @@ def train() -> float:
         # Optimization
         optimizer.zero_grad()
 
-        if args.model == 'idgnn':
-            out = model(batch, task.src_entity_table,
-                        task.dst_entity_table).flatten()
-            batch_size = batch[task.src_entity_table].batch_size
-
-            # Get target label
-            target = torch.isin(
-                batch[task.dst_entity_table].batch +
-                batch_size * batch[task.dst_entity_table].n_id,
-                src_batch + batch_size * dst_index,
-            ).float()
-
-            loss = F.binary_cross_entropy_with_logits(out, target)
-            numel = out.numel()
-        elif args.model in ['contextgnn', 'shallowrhsgnn']:
-            logits, lhs_y_batch, rhs_y_index = model.forward_sample_softmax(
-                batch, task.src_entity_table, task.dst_entity_table, src_batch,
-                dst_index)
-            edge_label_index = torch.stack([lhs_y_batch, rhs_y_index], dim=0)
-            loss = sparse_cross_entropy(logits, edge_label_index)
-            numel = len(batch[task.dst_entity_table].batch)
+        logits, lhs_y_batch, rhs_y_index = model.forward_sample_softmax(
+            batch, task.src_entity_table, task.dst_entity_table, src_batch,
+            dst_index)
+        edge_label_index = torch.stack([lhs_y_batch, rhs_y_index], dim=0)
+        loss = sparse_cross_entropy(logits, edge_label_index)
+        numel = len(batch[task.dst_entity_table].batch)
         loss.backward()
 
         optimizer.step()
