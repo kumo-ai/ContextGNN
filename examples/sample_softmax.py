@@ -199,10 +199,9 @@ def train() -> float:
             loss = F.binary_cross_entropy_with_logits(out, target)
             numel = out.numel()
         elif args.model in ['contextgnn', 'shallowrhsgnn']:
-            logits, lhs_y_batch, rhs_y_index = model(batch,
-                                                     task.src_entity_table,
-                                                     task.dst_entity_table,
-                                                     src_batch, dst_index)
+            logits, lhs_y_batch, rhs_y_index = model.forward_sample_softmax(
+                batch, task.src_entity_table, task.dst_entity_table, src_batch,
+                dst_index)
             edge_label_index = torch.stack([lhs_y_batch, rhs_y_index], dim=0)
             loss = sparse_cross_entropy(logits, edge_label_index)
             numel = len(batch[task.dst_entity_table].batch)
