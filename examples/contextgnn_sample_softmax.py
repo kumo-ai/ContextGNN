@@ -1,7 +1,7 @@
-"""Example script to run the models in this repository.
+"""Example script to run sample softmax on ContextGNN.
 
-python relbench_example.py --dataset rel-trial --task site-sponsor-run
-    --model contextgnn --epochs 10
+python contextgnn_sample_softmax.py --dataset rel-trial --task site-sponsor-run
+    --epochs 10
 """
 
 import argparse
