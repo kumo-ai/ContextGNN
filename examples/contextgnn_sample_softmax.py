@@ -176,21 +176,10 @@ def test(loader: NeighborLoader, desc: str) -> np.ndarray:
     pred_list: List[Tensor] = []
     for batch in tqdm(loader, desc=desc):
         batch = batch.to(device)
-        batch_size = batch[task.src_entity_table].batch_size
 
-        if args.model == "idgnn":
-            out = (model.forward(batch, task.src_entity_table,
-                                 task.dst_entity_table).detach().flatten())
-            scores = torch.zeros(batch_size, task.num_dst_nodes,
-                                 device=out.device)
-            scores[batch[task.dst_entity_table].batch,
-                   batch[task.dst_entity_table].n_id] = torch.sigmoid(out)
-        elif args.model in ['contextgnn', 'shallowrhsgnn']:
-            out = model(batch, task.src_entity_table,
-                        task.dst_entity_table).detach()
-            scores = torch.sigmoid(out)
-        else:
-            raise ValueError(f"Unsupported model type: {args.model}.")
+        out = model(batch, task.src_entity_table,
+                    task.dst_entity_table).detach()
+        scores = torch.sigmoid(out)
 
         _, pred_mini = torch.topk(scores, k=task.eval_k, dim=1)
         pred_list.append(pred_mini)
