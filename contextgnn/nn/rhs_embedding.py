@@ -66,17 +66,23 @@ class RHSEmbedding(torch.nn.Module):
                 child.reset_parameters()
         self._cached_rhs_embedding = None
 
-    def forward(self) -> Tensor:
+    def forward(self, index: Optional[Tensor] = None) -> Tensor:
         if not self.training:
             if self._cached_rhs_embedding is not None:
                 return self._cached_rhs_embedding
         outs = []
         if self.lookup_embedding is not None:
-            outs.append(self.lookup_embedding.weight)
+            if index is None:
+                outs.append(self.lookup_embedding.weight)
+            else:
+                outs.append(self.lookup_embedding.weight[index, :])
         if self.encoder is not None and self.projector is not None:
             assert self._feat is not None
 
-            out = self.encoder(self._feat)[0]
+            if index is None:
+                out = self.encoder(self._feat)[0]
+            else:
+                out = self.encoder(self._feat[index])[0]
             out = self.projector(out)
             # fuse
             out = torch.sum(out, dim=1)

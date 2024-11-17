@@ -135,21 +135,15 @@ if args.model == "idgnn":
     ).to(device)
 elif args.model == "contextgnn":
     model = ContextGNN(
-        data=data,
-        col_stats_dict=col_stats_dict,
+        data=data, col_stats_dict=col_stats_dict,
         rhs_emb_mode=RHSEmbeddingMode.FUSION,
         dst_entity_table=task.dst_entity_table,
-        num_nodes=num_dst_nodes_dict["train"],
-        num_layers=args.num_layers,
-        channels=args.channels,
-        aggr="sum",
-        norm="layer_norm",
-        embedding_dim=64,
-        torch_frame_model_kwargs={
+        num_nodes=num_dst_nodes_dict["train"], num_layers=args.num_layers,
+        channels=args.channels, aggr="sum", norm="layer_norm",
+        embedding_dim=64, torch_frame_model_kwargs={
             "channels": 128,
             "num_layers": 4,
-        },
-    ).to(device)
+        }, rhs_sample_size=100).to(device)
 elif args.model == 'shallowrhsgnn':
     model = ShallowRHSGNN(
         data=data,
@@ -205,9 +199,11 @@ def train() -> float:
             loss = F.binary_cross_entropy_with_logits(out, target)
             numel = out.numel()
         elif args.model in ['contextgnn', 'shallowrhsgnn']:
-            logits = model(batch, task.src_entity_table, task.dst_entity_table,
-                           dst_index)
-            edge_label_index = torch.stack([src_batch, dst_index], dim=0)
+            logits, lhs_y_batch, rhs_y_index = model(batch,
+                                                     task.src_entity_table,
+                                                     task.dst_entity_table,
+                                                     src_batch, dst_index)
+            edge_label_index = torch.stack([lhs_y_batch, rhs_y_index], dim=0)
             loss = sparse_cross_entropy(logits, edge_label_index)
             numel = len(batch[task.dst_entity_table].batch)
         loss.backward()

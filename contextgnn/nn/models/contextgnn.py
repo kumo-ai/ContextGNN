@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Type
+from typing import Any, Dict, Optional, Tuple, Type
 
 import torch
 from torch import Tensor
@@ -7,6 +7,7 @@ from torch_frame.nn.models import ResNet
 from torch_geometric.data import HeteroData
 from torch_geometric.nn import MLP
 from torch_geometric.typing import NodeType
+from torch_geometric.utils.map import map_index
 from typing_extensions import Self
 
 from contextgnn.nn.encoder import (
@@ -35,6 +36,7 @@ class ContextGNN(RHSEmbeddingGNN):
         norm: str = 'layer_norm',
         torch_frame_model_cls: Type[torch.nn.Module] = ResNet,
         torch_frame_model_kwargs: Optional[Dict[str, Any]] = None,
+        rhs_sample_size: Optional[int] = None,
     ) -> None:
         super().__init__(data, col_stats_dict, rhs_emb_mode, dst_entity_table,
                          num_nodes, embedding_dim)
@@ -76,6 +78,8 @@ class ContextGNN(RHSEmbeddingGNN):
         self.lin_offset_idgnn = torch.nn.Linear(embedding_dim, 1)
         self.lin_offset_embgnn = torch.nn.Linear(embedding_dim, 1)
         self.channels = channels
+        self.num_rhs_nodes = num_nodes
+        self.rhs_sample_size = rhs_sample_size
 
         self.reset_parameters()
 
@@ -91,12 +95,39 @@ class ContextGNN(RHSEmbeddingGNN):
         self.lin_offset_idgnn.reset_parameters()
         self.lhs_projector.reset_parameters()
 
+    def sample_step(self, rhs_idgnn_index, lhs_idgnn_batch, rhs_gnn_embedding,
+                    src_batch, dst_index):
+        rnd = torch.rand(self.num_rhs_nodes, device=rhs_idgnn_index.device)
+        # Prioritize idgnn logits
+        rnd[rhs_idgnn_index] = 3.
+        # Ensure we always sample positives
+        rhs_y_index = dst_index
+        assert rhs_y_index is not None  # always pass in dst index
+        rnd[rhs_y_index] = 4.
+        rhs_index = rnd.topk(self.rhs_sample_size, sorted=True).indices
+        inclusive = rhs_y_index.numel() <= self.rhs_sample_size
+        rhs_y_index, mask = map_index(rhs_y_index, rhs_index,
+                                      max_index=self.num_rhs_nodes,
+                                      inclusive=inclusive)
+        src_batch = src_batch if inclusive else src_batch[mask]
+        rhs_embedding = self.rhs_embedding(rhs_index)  # num_rhs_nodes, channel
+        inclusive = (rhs_y_index.numel() + rhs_idgnn_index.numel()
+                     <= self.rhs_sample_size)
+        rhs_idgnn_index, mask = map_index(rhs_idgnn_index, rhs_index,
+                                          inclusive=inclusive)
+        if not inclusive:
+            lhs_idgnn_batch = lhs_idgnn_batch[mask]
+            rhs_gnn_embedding = rhs_gnn_embedding[mask]
+        return rhs_embedding, lhs_idgnn_batch, rhs_gnn_embedding, rhs_y_index
+
     def forward(
         self,
         batch: HeteroData,
         entity_table: NodeType,
         dst_table: NodeType,
-    ) -> Tensor:
+        src_batch: Optional[Tensor] = None,
+        dst_index: Optional[Tensor] = None,
+    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         seed_time = batch[entity_table].seed_time
         x_dict = self.encoder(batch.tf_dict)
 
@@ -121,7 +152,14 @@ class ContextGNN(RHSEmbeddingGNN):
         rhs_gnn_embedding = x_dict[dst_table]  # num_sampled_rhs, channel
         rhs_idgnn_index = batch.n_id_dict[dst_table]  # num_sampled_rhs
         lhs_idgnn_batch = batch.batch_dict[dst_table]  # batch_size
-        rhs_embedding = self.rhs_embedding()  # num_rhs_nodes, channel
+
+        if self.rhs_sample_size is not None and self.training:
+            (rhs_embedding, lhs_idgnn_batch, rhs_gnn_embedding,
+             rhs_y_index) = self.sample_step(rhs_idgnn_index, lhs_idgnn_batch,
+                                             rhs_gnn_embedding, src_batch,
+                                             dst_index)
+        else:
+            rhs_embedding = self.rhs_embedding()  # num_rhs_nodes, channel
 
         embgnn_logits = lhs_embedding_projected @ rhs_embedding.t(
         )  # batch_size, num_rhs_nodes
@@ -148,7 +186,7 @@ class ContextGNN(RHSEmbeddingGNN):
         idgnn_logits = idgnn_logits + idgnn_offset_logits[lhs_idgnn_batch]
 
         embgnn_logits[lhs_idgnn_batch, rhs_idgnn_index] = idgnn_logits
-        return embgnn_logits
+        return embgnn_logits, src_batch, rhs_y_index
 
     def to(self, *args, **kwargs) -> Self:
         return super().to(*args, **kwargs)
