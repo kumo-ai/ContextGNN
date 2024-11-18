@@ -14,7 +14,7 @@ python relbench_link_prediction_benchmark.py --model contextgnn
 
 To reproduce results on IJCAI-Contest, run `benchmark/tgt_ijcai_benchmark.py`.
 
-```
+```sh
 python tgt_ijcai_benchmark.py --model contextgnn
 ```
 
