@@ -129,7 +129,7 @@ optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 def train() -> float:
     model.train()
 
-    loss_accum = count_accum = 0
+    loss_accum = count_accum = 0.0
     steps = 0
     total_steps = min(len(loader_dict["train"]), args.max_steps_per_epoch)
     sparse_tensor = SparseTensor(dst_nodes_dict["train"][1], device=device)
