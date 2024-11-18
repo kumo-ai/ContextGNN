@@ -9,7 +9,7 @@ import json
 import os
 import warnings
 from pathlib import Path
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
@@ -31,7 +31,7 @@ from torch_geometric.typing import NodeType
 from torch_geometric.utils.cross_entropy import sparse_cross_entropy
 from tqdm import tqdm
 
-from contextgnn.nn.models import IDGNN, ContextGNN, ShallowRHSGNN
+from contextgnn.nn.models import ContextGNN
 from contextgnn.utils import GloveTextEmbedding, RHSEmbeddingMode
 
 parser = argparse.ArgumentParser()
@@ -45,6 +45,7 @@ parser.add_argument("--channels", type=int, default=128)
 parser.add_argument("--aggr", type=str, default="sum")
 parser.add_argument("--num_layers", type=int, default=6)
 parser.add_argument("--num_neighbors", type=int, default=64)
+parser.add_argument("--rhs_sample_size", type=int, default=1000)
 parser.add_argument("--temporal_strategy", type=str, default="last")
 parser.add_argument("--max_steps_per_epoch", type=int, default=200)
 parser.add_argument("--num_workers", type=int, default=0)
@@ -110,9 +111,7 @@ for split in ["train", "val", "test"]:
         persistent_workers=args.num_workers > 0,
     )
 
-model: Union[IDGNN, ContextGNN, ShallowRHSGNN]
-
-model = ContextGNN(
+model: ContextGNN = ContextGNN(
     data=data, col_stats_dict=col_stats_dict,
     rhs_emb_mode=RHSEmbeddingMode.FUSION,
     dst_entity_table=task.dst_entity_table,
@@ -121,7 +120,7 @@ model = ContextGNN(
     torch_frame_model_kwargs={
         "channels": 128,
         "num_layers": 4,
-    }, rhs_sample_size=1000).to(device)
+    }, rhs_sample_size=args.rhs_sample_size).to(device)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
