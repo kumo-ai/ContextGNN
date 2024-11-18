@@ -179,7 +179,7 @@ class ContextGNN(RHSEmbeddingGNN):
         batch: HeteroData,
         entity_table: NodeType,
         dst_table: NodeType,
-    ) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
+    ) -> Tensor:
         seed_time = batch[entity_table].seed_time
         x_dict = self.forward_gnn(batch, entity_table)
 
