@@ -23,6 +23,7 @@ from relbench.modeling.loader import SparseTensor
 from relbench.modeling.utils import get_stype_proposal
 from relbench.tasks import get_task
 from torch import Tensor
+from torch.optim.lr_scheduler import ExponentialLR
 from torch_frame import stype
 from torch_frame.config.text_embedder import TextEmbedderConfig
 from torch_geometric.loader import NeighborLoader
@@ -134,6 +135,7 @@ model: ContextGNN = ContextGNN(
     }, rhs_sample_size=args.rhs_sample_size).to(device)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+lr_scheduler = ExponentialLR(optimizer, gamma=args.gamma_rate)
 
 
 def train() -> float:
@@ -204,6 +206,7 @@ for epoch in range(1, args.epochs + 1):
     if epoch % args.eval_epochs_interval == 0:
         val_pred = test(loader_dict["val"], desc="Val")
         val_metrics = task.evaluate(val_pred, task.get_table("val"))
+        lr_scheduler.step()
         print(f"Epoch: {epoch:02d}, Train loss: {train_loss}, "
               f"Val metrics: {val_metrics}")
 
