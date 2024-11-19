@@ -37,7 +37,6 @@ from contextgnn.utils import GloveTextEmbedding, RHSEmbeddingMode
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-trial")
 parser.add_argument("--task", type=str, default="site-sponsor-run")
@@ -57,7 +56,6 @@ parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--cache_dir", type=str,
                     default=os.path.expanduser("~/.cache/relbench_examples"))
 args = parser.parse_args()
-
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if torch.cuda.is_available():
@@ -202,7 +200,8 @@ for model_type in ["contextgnn", "idgnn", "shallowrhsgnn"]:
                 ).float()
                 loss = F.binary_cross_entropy_with_logits(out, target)
             elif model_type in ['contextgnn', 'shallowrhsgnn']:
-                logits = model(batch, task.src_entity_table, task.dst_entity_table)
+                logits = model(batch, task.src_entity_table,
+                               task.dst_entity_table)
                 edge_label_index = torch.stack([src_batch, dst_index], dim=0)
                 loss = sparse_cross_entropy(logits, edge_label_index)
 
@@ -234,7 +233,8 @@ for model_type in ["contextgnn", "idgnn", "shallowrhsgnn"]:
                 ).float()
                 loss = F.binary_cross_entropy_with_logits(out, target)
             elif model_type in ['contextgnn', 'shallowrhsgnn']:
-                logits = model(batch, task.src_entity_table, task.dst_entity_table)
+                logits = model(batch, task.src_entity_table,
+                               task.dst_entity_table)
                 edge_label_index = torch.stack([src_batch, dst_index], dim=0)
                 loss = sparse_cross_entropy(logits, edge_label_index)
 
@@ -250,8 +250,7 @@ for model_type in ["contextgnn", "idgnn", "shallowrhsgnn"]:
         gpu_time = start.elapsed_time(end)
         gpu_time_in_s = gpu_time / 1_000
         print(
-            f"model: {model_type}, ",
-            f"total: {gpu_time_in_s} s, "
+            f"model: {model_type}, ", f"total: {gpu_time_in_s} s, "
             f"avg: {gpu_time_in_s / num_steps} s/iter, "
             f"avg: {num_steps / gpu_time_in_s} iter/s")
 
