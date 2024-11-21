@@ -1,4 +1,3 @@
-
 """Example script to run the models in this repository.
 
 python3 ngcf.py --dataset rel-hm --task user-item-purchase --val_loss
@@ -301,13 +300,13 @@ def get_edge_label_index(sup_edge_index: Tensor, index: Tensor) -> Tensor:
 
 num_steps = 1_000
 
+
 def train(epoch: int) -> float:
     model.train()
     total_loss = total_examples = 0
     total_steps = min(args.max_steps_per_epoch, len(train_loader))
     print("warming up")
-    for i, index in enumerate(
-            train_loader, total=total_steps, desc="Train"):
+    for i, index in enumerate(train_loader, total=total_steps, desc="Train"):
         if i >= args.max_steps_per_epoch:
             break
         edge_label_index = get_edge_label_index(train_edge_index, index)
@@ -328,26 +327,25 @@ def train(epoch: int) -> float:
         if i == 9:
             break
 
-
     print("benchmarking...")
     start = torch.cuda.Event(enable_timing=True)
     end = torch.cuda.Event(enable_timing=True)
     start.record()
-        # for i in range(num_steps):
-        #     batch = batches[i % len(batches)]
+    # for i in range(num_steps):
+    #     batch = batches[i % len(batches)]
     for i, batch in enumerate(train_loader):
         edge_label_index = get_edge_label_index(train_edge_index, index)
         optimizer.zero_grad()
         pos_rank, neg_rank = model(
-                edge_label_index,
-                train_norm_adj,
-                device=device,
+            edge_label_index,
+            train_norm_adj,
+            device=device,
         ).chunk(2)
         loss = model.recommendation_loss(
-                pos_rank,
-                neg_rank,
-                node_id=edge_label_index.unique(),
-                lambda_reg=args.lambda_reg,
+            pos_rank,
+            neg_rank,
+            node_id=edge_label_index.unique(),
+            lambda_reg=args.lambda_reg,
         )
         loss.backward()
         optimizer.step()
