@@ -54,7 +54,7 @@ parser.add_argument("--batch_size", type=int, default=128)
 parser.add_argument("--supervision_ratio", type=float, default=0.5)
 parser.add_argument("--channels", type=int, default=128)
 parser.add_argument("--aggr", type=str, default="sum")
-parser.add_argument("--num_layers", type=int, default=3)
+parser.add_argument("--num_layers", type=int, default=4)
 parser.add_argument("--num_neighbors", type=int, default=32)
 parser.add_argument("--max_steps_per_epoch", type=int, default=2000)
 parser.add_argument("--num_workers", type=int, default=0)
@@ -68,6 +68,48 @@ if torch.cuda.is_available():
     torch.set_num_threads(1)
 seed_everything(args.seed)
 
+
+def _filter(
+        pred_isin: NDArray[np.int_], dst_count: NDArray[np.int_]
+) -> Tuple[NDArray[np.int_], NDArray[np.int_]]:
+
+    is_pos = dst_count > 0
+    return pred_isin[is_pos], dst_count[is_pos]
+
+
+def link_prediction_ndcg(
+    pred_isin: NDArray[np.int_],
+    dst_count: NDArray[np.int_],
+) -> float:
+    pred_isin, dst_count = _filter(pred_isin, dst_count)
+    eval_k = pred_isin.shape[1]
+
+    # Compute the discounted multiplier (1 / log2(i + 2) for i = 0, ..., k-1)
+    discounted_multiplier = np.concatenate(
+        (np.zeros(1), 1 / np.log2(np.arange(1, eval_k + 1) + 1)))
+
+    # Compute Discounted Cumulative Gain (DCG)
+    discounted_cumulative_gain = (pred_isin *
+                                  discounted_multiplier[1:eval_k + 1]).sum(
+                                      axis=1)
+
+    # Clip dst_count to the range [0, eval_k]
+    clipped_dst_count = np.clip(dst_count, 0, eval_k)
+
+    # Compute Ideal Discounted Cumulative Gain (IDCG)
+    ideal_discounted_multiplier_cumsum = np.cumsum(discounted_multiplier)
+    ideal_discounted_cumulative_gain = ideal_discounted_multiplier_cumsum[
+        clipped_dst_count]
+
+    # Avoid division by zero
+    ideal_discounted_cumulative_gain = np.clip(
+        ideal_discounted_cumulative_gain, 1e-10, None)
+
+    # Compute NDCG
+    ndcg_scores = discounted_cumulative_gain / ideal_discounted_cumulative_gain
+    return ndcg_scores.mean()
+
+
 PSEUDO_TIME = "pseudo_time"
 TRAIN_SET_TIMESTAMP = pd.Timestamp("1970-01-01")
 SRC_ENTITY_TABLE = "user_table"
@@ -80,6 +122,7 @@ METRICS = [
     link_prediction_map,
     link_prediction_precision,
     link_prediction_recall,
+    link_prediction_ndcg,
 ]
 
 dataset = args.dataset
@@ -215,9 +258,13 @@ data, col_stats_dict = static_data_make_pkey_fkey_graph(
     col_to_stype_dict=col_to_stype_dict,
 )
 
-num_neighbors = [
-    int(args.num_neighbors // 2**i) for i in range(args.num_layers)
-]
+# num_neighbors = [
+#     int(args.num_neighbors // 2**i) for i in range(args.num_layers)
+# ]
+# num_neighbors = [16, 8, 8, 4]
+# num_neighbors = [8, 8, 8, 8]
+num_neighbors = [16, 16, 16, 16]
+print(f"{num_neighbors=}")
 
 
 def static_get_link_train_table_input(
@@ -359,7 +406,6 @@ def train() -> float:
             batch[SRC_ENTITY_TABLE].input_id[src_batch]]
         global_edge_label_index = torch.stack([global_src_index, dst_index],
                                               dim=0)
-
         supervision_edgse_sample_size = int(global_edge_label_index.shape[1] *
                                             args.supervision_ratio)
         sample_indices = torch.randperm(global_edge_label_index.shape[1],
@@ -406,15 +452,19 @@ def train() -> float:
             torch.isin(global_edge_index_hash, global_edge_label_index_hash) *
             supervision_seed_node_mask)
 
+        # TODO (xinwei): manually swtich the direct and reverse edges
         # Apply the mask to filter out the ground truth edges
         edge_index_message_passing = edge_index[:, mask]
-
-        batch[edge_type].edge_index = edge_index_message_passing
-
+        edge_index_message_passing_sparse = (
+            edge_index_message_passing.to_sparse_tensor())
+        edge_index_message_passing_reverse_sparse = (
+            edge_index_message_passing.flip(dims=[0]).to_sparse_tensor())
+        # batch[edge_type].edge_index = edge_index_message_passing_sparse
+        batch[edge_type].edge_index = edge_index_message_passing_reverse_sparse
         reverse_edge_type = (DST_ENTITY_TABLE, DST_ENTITY_COL,
                              SRC_ENTITY_TABLE)
-        batch[reverse_edge_type].edge_index = edge_index_message_passing.flip(
-            dims=[0])
+        # batch[reverse_edge_type].edge_index = edge_index_message_passing
+        batch[reverse_edge_type].edge_index = edge_index_message_passing_sparse
 
         # Optimization
         optimizer.zero_grad()
@@ -452,6 +502,13 @@ def train() -> float:
     return loss_accum / count_accum if count_accum > 0 else float("nan")
 
 
+known_targets = torch.zeros((NUM_SRC_NODES, NUM_DST_NODES), device=device)
+src_indices = train_df[SRC_ENTITY_COL].to_numpy(dtype=np.int64)
+for src_idx, dst_idxs in zip(src_indices, train_df[DST_ENTITY_COL]):
+    assert isinstance(dst_idxs, list)
+    known_targets[src_idx, dst_idxs] = 1
+
+
 @torch.no_grad()
 def test(loader: NeighborLoader, desc: str) -> np.ndarray:
     model.eval()
@@ -472,6 +529,15 @@ def test(loader: NeighborLoader, desc: str) -> np.ndarray:
         else:
             raise ValueError(f"Unsupported model type: {args.model}.")
 
+        # Map local batch indices to global indices
+        global_batch_src_ids = batch[SRC_ENTITY_TABLE].n_id[:batch_size]
+        # Select the rows from known_targets that correspond to the global
+        # indices
+        batch_known_targets = known_targets[global_batch_src_ids]
+        # Mask the scores of the known target values to exclude them from
+        # predictions
+        scores[batch_known_targets.bool()] = -float(
+            "inf")  # Mask known targets with -inf
         _, pred_mini = torch.topk(scores, k=EVAL_K, dim=1)
         pred_list.append(pred_mini)
     pred = torch.cat(pred_list, dim=0).cpu().numpy()
