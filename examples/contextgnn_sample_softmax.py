@@ -1,7 +1,9 @@
 """Example script to run sample softmax on ContextGNN.
 
 python contextgnn_sample_softmax.py --dataset rel-trial --task site-sponsor-run
-    --epochs 10
+    --epochs 10 --rhs_sample_size 1000
+
+If rhs_sample_size is set to -1, it means that we sample all rhs.
 """
 
 import argparse

@@ -1,3 +1,8 @@
+"""Example script to run ContextGNN/ShallowRHSGNN on IJCAI contest dataset.
+
+python ijcai_example.py
+"""
+
 import argparse
 import os.path as osp
 import pickle
@@ -243,7 +248,7 @@ def test(loader: NeighborLoader, desc: str, target=None) -> torch.Tensor:
                 pos_item_per_user = trnLabel[user_idx].coalesce().indices(
                 ).reshape(-1)
 
-                # We need to select 98 negative items.
+                # We need to select 99 negative items.
                 # It is too expensive to do isin on the entire set of items
                 # Instead, we first quick sample 1000 items and find 98
                 # negative items for this user. This works because the true
