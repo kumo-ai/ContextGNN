@@ -4,12 +4,6 @@ This repository contains PyTorch implementation of ContextGNN.
 
 ## How to Run
 
-If you want to run ContextGNN and you have a smaller GPU machine, run `contextgnn_sample_softmax.py`.
-
-```sh
-python examples/contextgnn_sample_softmax.py --rhs_sample_size 1000
-```
-
 To reproduce results on RelBench, run `benchmark/relbench_link_prediction_benchmark.py`.
 
 ```sh
@@ -28,6 +22,11 @@ To run ContextGNN on any RelBench dataset, without tuning, run `examples/relbenc
 python examples/relbench_example.py --dataset rel-trial --task site-sponsor-run --model contextgnn
 ```
 
+To run ContextGNN with sampled right hand side nodes, run `contextgnn_sample_softmax.py`.
+
+```sh
+python examples/contextgnn_sample_softmax.py --rhs_sample_size 1000
+```
 
 ## Install Instruction
 
