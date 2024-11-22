@@ -36,7 +36,7 @@ from torch_geometric.typing import SparseTensor
 from torch_geometric.utils import add_self_loops, coalesce, to_undirected
 from tqdm import tqdm
 
-from hybridgnn.utils import GloveTextEmbedding
+from contextgnn.utils import GloveTextEmbedding
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="rel-trial")
