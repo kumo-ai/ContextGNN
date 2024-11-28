@@ -21,7 +21,7 @@ from contextgnn.utils import RHSEmbeddingMode
 
 
 class ContextGNN(RHSEmbeddingGNN):
-    r"""Implementation of HybridGNN model."""
+    r"""Implementation of ContextGNN model."""
     def __init__(
         self,
         data: HeteroData,
