@@ -43,6 +43,6 @@ jobs:
           pytest --cov --cov-report=xml
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v2
+        uses: codecov/codecov-action@f32b3a3741e1053eb607407145bc9619351dc93b
         with:
           fail_ci_if_error: false
